@@ -1,9 +1,16 @@
+interface Box {
+  label: string;
+  probability: number;
+  color: string;
+  bounding: [number, number, number, number];
+}
+
 /**
  * Render prediction boxes
- * @param {HTMLCanvasElement} canvas canvas tag reference
- * @param {Array[Object]} boxes boxes array
+ * @param {CanvasRenderingContext2D} ctx canvas context
+ * @param {Box[]} boxes boxes array
  */
-export const renderBoxes = (ctx, boxes) => {
+export const renderBoxes = (ctx: CanvasRenderingContext2D, boxes: Box[]): void => {
   // font configs
   const font = `${Math.max(
     Math.round(Math.max(ctx.canvas.width, ctx.canvas.height) / 40),
@@ -42,6 +49,9 @@ export const renderBoxes = (ctx, boxes) => {
 };
 
 export class Colors {
+  palette: string[];
+  n: number;
+
   // ultralytics color palette https://ultralytics.com/
   constructor() {
     this.palette = [
@@ -69,10 +79,10 @@ export class Colors {
     this.n = this.palette.length;
   }
 
-  get = (i) => this.palette[Math.floor(i) % this.n];
+  get = (i: number): string => this.palette[Math.floor(i) % this.n];
 
-  static hexToRgba = (hex, alpha) => {
-    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  static hexToRgba = (hex: string, alpha: number): number[] | null => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result
       ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16), alpha]
       : null;

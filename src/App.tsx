@@ -6,13 +6,22 @@ import { detectImageSimple } from "./utils/detectSimple";
 import { download } from "./utils/download";
 import "./style/App.css";
 
-const App = () => {
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState({ text: "Loading OpenCV.js", progress: null });
-  const [image, setImage] = useState(null);
-  const inputImage = useRef(null);
-  const imageRef = useRef(null);
-  const canvasRef = useRef(null);
+interface LoadingState {
+  text: string;
+  progress: number | null;
+}
+
+interface Session {
+  net: InferenceSession;
+}
+
+const App: React.FC = () => {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState<LoadingState | null>({ text: "Loading OpenCV.js", progress: null });
+  const [image, setImage] = useState<string | null>(null);
+  const inputImage = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // configs
   const modelName = "license-plate.onnx";
@@ -21,7 +30,7 @@ const App = () => {
   const scoreThreshold = 0.25;
 
   // wait until opencv.js initialized
-  cv["onRuntimeInitialized"] = async () => {
+  (cv as any)["onRuntimeInitialized"] = async () => {
     const baseModelURL = `${process.env.PUBLIC_URL}/model`;
 
     // create session
@@ -69,6 +78,8 @@ const App = () => {
           alt=""
           style={{ display: image ? "block" : "none" }}
           onLoad={() => {
+            if (!imageRef.current || !canvasRef.current || !session) return;
+            
             // Set canvas size to match image
             canvasRef.current.width = imageRef.current.width;
             canvasRef.current.height = imageRef.current.height;
@@ -101,15 +112,20 @@ const App = () => {
             setImage(null);
           }
 
-          const url = URL.createObjectURL(e.target.files[0]); // create image url
-          imageRef.current.src = url; // set image source
+          const file = e.target.files?.[0];
+          if (!file) return;
+
+          const url = URL.createObjectURL(file); // create image url
+          if (imageRef.current) {
+            imageRef.current.src = url; // set image source
+          }
           setImage(url);
         }}
       />
       <div className="btn-container">
         <button
           onClick={() => {
-            inputImage.current.click();
+            inputImage.current?.click();
           }}
         >
           Open local image
@@ -118,8 +134,8 @@ const App = () => {
           /* show close btn when there is image */
           <button
             onClick={() => {
-              inputImage.current.value = "";
-              imageRef.current.src = "#";
+              if (inputImage.current) inputImage.current.value = "";
+              if (imageRef.current) imageRef.current.src = "#";
               URL.revokeObjectURL(image);
               setImage(null);
             }}

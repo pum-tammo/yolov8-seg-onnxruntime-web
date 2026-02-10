@@ -1,4 +1,6 @@
-export const download = (url, logger = null) => {
+type Logger = [string, (state: { text: string; progress: number | null }) => void];
+
+export const download = (url: string, logger: Logger | null = null): Promise<ArrayBuffer> => {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("GET", url, true);
@@ -7,7 +9,7 @@ export const download = (url, logger = null) => {
       const [log, setState] = logger;
       request.onprogress = (e) => {
         const progress = (e.loaded / e.total) * 100;
-        setState({ text: log, progress: progress.toFixed(2) });
+        setState({ text: log, progress: parseFloat(progress.toFixed(2)) });
       };
     }
     request.onload = function () {
@@ -19,7 +21,6 @@ export const download = (url, logger = null) => {
           statusText: request.statusText,
         });
       }
-      resolve(request.response);
     };
     request.onerror = function () {
       reject({

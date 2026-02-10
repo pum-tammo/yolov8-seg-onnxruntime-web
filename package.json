@@ -46,7 +46,11 @@
   },
   "devDependencies": {
     "@craco/craco": "^7.1.0",
+    "@types/node": "^25.2.3",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
     "copy-webpack-plugin": "^11.0.0",
-    "gh-pages": "^4.0.0"
+    "gh-pages": "^4.0.0",
+    "typescript": "^5.9.3"
   }
 }
