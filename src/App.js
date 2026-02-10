@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import cv from "@techstark/opencv-js";
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import Loader from "./components/loader";
-import { detectImage } from "./utils/detect";
+import { detectImageSimple } from "./utils/detectSimple";
 import { download } from "./utils/download";
 import "./style/App.css";
 
@@ -15,10 +15,9 @@ const App = () => {
   const canvasRef = useRef(null);
 
   // configs
-  const modelName = "yolov8n-seg.onnx";
+  const modelName = "license-plate.onnx";
   const modelInputShape = [1, 3, 640, 640];
-  const topk = 100;
-  const iouThreshold = 0.45;
+  const iouThreshold = 0.3;
   const scoreThreshold = 0.25;
 
   // wait until opencv.js initialized
@@ -28,19 +27,9 @@ const App = () => {
     // create session
     const arrBufNet = await download(
       `${baseModelURL}/${modelName}`, // url
-      ["Loading YOLOv8 Segmentation model", setLoading] // logger
+      ["Loading License Plate Detection model", setLoading] // logger
     );
     const yolov8 = await InferenceSession.create(arrBufNet);
-    const arrBufNMS = await download(
-      `${baseModelURL}/nms-yolov8.onnx`, // url
-      ["Loading NMS model", setLoading] // logger
-    );
-    const nms = await InferenceSession.create(arrBufNMS);
-    const arrBufMask = await download(
-      `${baseModelURL}/mask-yolov8-seg.onnx`, // url
-      ["Loading Mask model", setLoading] // logger
-    );
-    const mask = await InferenceSession.create(arrBufMask);
 
     // warmup main model
     setLoading({ text: "Warming up model...", progress: null });
@@ -51,7 +40,7 @@ const App = () => {
     );
     await yolov8.run({ images: tensor });
 
-    setSession({ net: yolov8, nms: nms, mask: mask });
+    setSession({ net: yolov8, nms: null, mask: null });
     setLoading(null);
   };
 
@@ -63,9 +52,9 @@ const App = () => {
         </Loader>
       )}
       <div className="header">
-        <h1>YOLOv8 Object Segmentation App</h1>
+        <h1>License Plate Detection App</h1>
         <p>
-          YOLOv8 object detection application live on browser powered by{" "}
+          License plate detection application live on browser powered by{" "}
           <code>onnxruntime-web</code>
         </p>
         <p>
@@ -80,11 +69,14 @@ const App = () => {
           alt=""
           style={{ display: image ? "block" : "none" }}
           onLoad={() => {
-            detectImage(
+            // Set canvas size to match image
+            canvasRef.current.width = imageRef.current.width;
+            canvasRef.current.height = imageRef.current.height;
+            
+            detectImageSimple(
               imageRef.current,
               canvasRef.current,
               session,
-              topk,
               iouThreshold,
               scoreThreshold,
               modelInputShape
@@ -93,8 +85,6 @@ const App = () => {
         />
         <canvas
           id="canvas"
-          width={modelInputShape[2]}
-          height={modelInputShape[3]}
           ref={canvasRef}
         />
       </div>
