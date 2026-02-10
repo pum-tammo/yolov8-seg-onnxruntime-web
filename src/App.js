@@ -40,7 +40,7 @@ const App = () => {
     );
     await yolov8.run({ images: tensor });
 
-    setSession({ net: yolov8, nms: null, mask: null });
+    setSession({ net: yolov8 });
     setLoading(null);
   };
 
