@@ -1,10 +1,14 @@
 import React, { useState, useRef } from "react";
-import cv from "@techstark/opencv-js";
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import Loader from "./components/loader";
 import { detectImageSimple } from "./utils/detectSimple";
 import { download } from "./utils/download";
 import "./style/App.css";
+
+// Configure ONNX Runtime WebAssembly paths
+import * as ort from "onnxruntime-web";
+ort.env.wasm.wasmPaths = `${import.meta.env.BASE_URL}`;
+ort.env.wasm.numThreads = 1;
 
 interface LoadingState {
   text: string;
@@ -30,8 +34,15 @@ const App: React.FC = () => {
   const scoreThreshold = 0.25;
 
   // wait until opencv.js initialized
-  (cv as any)["onRuntimeInitialized"] = async () => {
-    const baseModelURL = `${process.env.PUBLIC_URL}/model`;
+  React.useEffect(() => {
+    const initOpenCV = () => {
+      const w = window as any;
+      if (typeof w.cv === 'undefined') {
+        setTimeout(initOpenCV, 100);
+        return;
+      }
+      w.cv["onRuntimeInitialized"] = async () => {
+    const baseModelURL = `${import.meta.env.BASE_URL}model`;
 
     // create session
     const arrBufNet = await download(
@@ -51,7 +62,10 @@ const App: React.FC = () => {
 
     setSession({ net: yolov8 });
     setLoading(null);
-  };
+      };
+    };
+    initOpenCV();
+  }, []);
 
   return (
     <div className="App">

@@ -1,7 +1,9 @@
-import cv from "@techstark/opencv-js";
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import { renderBoxes, Colors } from "./renderBox";
 import labels from "./labels.json";
+
+// Access global cv from window - function to get it dynamically
+const getCV = () => (window as any).cv;
 
 const colors = new Colors();
 
@@ -143,6 +145,7 @@ function calculateIoU(box1: [number, number, number, number], box2: [number, num
  * Preprocessing image
  */
 const preprocessing = (source: HTMLImageElement, modelWidth: number, modelHeight: number): [any, number, number] => {
+  const cv = getCV();
   const mat = cv.imread(source);
   const matC3 = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3);
   cv.cvtColor(mat, matC3, cv.COLOR_RGBA2BGR);

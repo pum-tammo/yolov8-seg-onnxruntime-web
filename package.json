@@ -6,13 +6,13 @@
     "@techstark/opencv-js": "4.5.5-release.2",
     "onnxruntime-web": "^1.20.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1"
+    "react-dom": "^18.2.0"
   },
   "scripts": {
-    "start": "craco start",
-    "build": "craco build",
-    "deploy": "gh-pages -d build"
+    "start": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "deploy": "gh-pages -d dist"
   },
   "eslintConfig": {
     "extends": [
@@ -45,12 +45,13 @@
     "url": "https://github.com/Hyuto/yolov8-seg-onnxruntime-web/issues"
   },
   "devDependencies": {
-    "@craco/craco": "^7.1.0",
     "@types/node": "^25.2.3",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
-    "copy-webpack-plugin": "^11.0.0",
+    "@vitejs/plugin-react": "^5.1.4",
     "gh-pages": "^4.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-static-copy": "^3.2.0"
   }
 }
