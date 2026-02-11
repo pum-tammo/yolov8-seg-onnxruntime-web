@@ -94,7 +94,7 @@ const App: React.FC = () => {
           onLoad={() => {
             if (!imageRef.current || !canvasRef.current || !session) return;
             
-            // Set canvas size to match image
+            // Set canvas size to match displayed image size
             canvasRef.current.width = imageRef.current.width;
             canvasRef.current.height = imageRef.current.height;
             

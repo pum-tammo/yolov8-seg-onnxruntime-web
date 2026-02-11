@@ -88,8 +88,46 @@ export const detectImageSimple = async (
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   renderBoxes(ctx, selectedBoxes);
 
+  // Extract and log license plate crops as data URLs
+  extractLicensePlateCrops(image, selectedBoxes, canvas);
+
   input.delete();
 };
+
+/**
+ * Extract license plate crops and log them as data URLs
+ * @param image Original image
+ * @param boxes Detected license plate boxes
+ * @param canvas Canvas element (to crop from instead of image)
+ */
+function extractLicensePlateCrops(image: HTMLImageElement, boxes: Box[], canvas: HTMLCanvasElement): void {
+  boxes.forEach((box, index) => {
+    const [x, y, width, height] = box.bounding;
+    
+    // Create a temporary canvas for the crop
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = width;
+    cropCanvas.height = height;
+    
+    const cropCtx = cropCanvas.getContext('2d');
+    if (!cropCtx) return;
+    
+    // Crop from canvas which has the correct coordinate system
+    cropCtx.drawImage(
+      canvas,
+      x, y, width, height,  // Source rectangle from canvas
+      0, 0, width, height   // Destination rectangle
+    );
+    
+    // Convert to data URL
+    const dataUrl = cropCanvas.toDataURL('image/png');
+    
+    console.log(`License Plate ${index + 1} (${box.probability.toFixed(3)} confidence):`);
+    console.log(dataUrl);
+    console.log(`To view: Open a new tab and paste the data URL above into the address bar`);
+    console.log('---');
+  });
+}
 
 /**
  * Non-Maximum Suppression
