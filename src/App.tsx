@@ -1,9 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import Loader from "./components/loader";
+import { PlateInfoCard } from "./components/PlateInfoCard";
 import { detectImageSimple } from "./utils/detectSimple";
 import { download } from "./utils/download";
 import { globalOCREngine } from "./utils/ocr/ocrEngine";
+import { useCamera } from "./hooks/useCamera";
+import { usePlateScanner, ScanResult } from "./hooks/usePlateScanner";
+import { plateDatabase, PlateInfo } from "./utils/plateDatabase";
 import "./style/App.css";
 
 // Configure ONNX Runtime WebAssembly paths
@@ -13,8 +17,8 @@ ort.env.wasm.numThreads = 1;
 
 // Configure execution providers: WebGL (fast) with WASM fallback (compatible)
 const executionProviders: ort.InferenceSession.ExecutionProviderConfig[] = [
-  'webgl',
-  'wasm'
+  "webgl",
+  "wasm",
 ];
 
 // Types
@@ -131,9 +135,7 @@ const Header: React.FC = () => (
       Automatic License Plate Recognition (ALPR) powered by{" "}
       <code>onnxruntime-web</code>
     </p>
-    <p>
-      YOLOv8 Detection + MobileViT OCR
-    </p>
+    <p>YOLOv8 Detection + MobileViT OCR</p>
   </div>
 );
 
@@ -142,14 +144,68 @@ const App: React.FC = () => {
     text: "Loading OpenCV.js",
     progress: null,
   });
+  const [mode, setMode] = useState<'camera' | 'image'>('camera');
+  const [foundPlate, setFoundPlate] = useState<PlateInfo | null>(null);
+  const [scanConfidence, setScanConfidence] = useState<number | undefined>(undefined);
 
   const openCVReady = useOpenCV();
   const session = useModelSession(openCVReady, setLoading);
-  const { imageUrl, inputRef, openFilePicker, setImage, clearImage } =
-    useImageUpload();
+  const { imageUrl, inputRef, openFilePicker, setImage, clearImage } = useImageUpload();
 
+  // Camera mode
+  const { videoRef, isActive: cameraActive, error: cameraError, startCamera, stopCamera } = useCamera();
+  
+  // Scanner with 500ms interval
+  const { isScanning, canvasRef: scanCanvasRef, startScanning, stopScanning } = usePlateScanner(
+    session,
+    {
+      intervalMs: 500,
+      iouThreshold: MODEL_CONFIG.iouThreshold,
+      scoreThreshold: MODEL_CONFIG.scoreThreshold,
+      inputShape: MODEL_CONFIG.inputShape,
+    },
+    (result: ScanResult) => {
+      // Check if plate exists in database
+      const plateInfo = plateDatabase.findPlate(result.plate);
+      if (plateInfo) {
+        setFoundPlate(plateInfo);
+        setScanConfidence(result.confidence);
+        // Stop camera to save battery
+        stopScanning();
+        stopCamera();
+      }
+    }
+  );
+
+  // Image mode refs
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const handleCameraStart = useCallback(async () => {
+    setMode('camera');
+    setFoundPlate(null);
+    await startCamera();
+    if (videoRef.current && session) {
+      setTimeout(() => {
+        if (videoRef.current) {
+          startScanning(videoRef.current);
+        }
+      }, 500);
+    }
+  }, [startCamera, startScanning, session, videoRef]);
+
+  const handleCameraStop = useCallback(() => {
+    stopScanning();
+    stopCamera();
+    setFoundPlate(null);
+  }, [stopScanning, stopCamera]);
+
+  const handleImageMode = useCallback(() => {
+    setMode('image');
+    stopScanning();
+    stopCamera();
+    setFoundPlate(null);
+  }, [stopScanning, stopCamera]);
 
   const handleImageLoad = useCallback(() => {
     if (!imageRef.current || !canvasRef.current || !session) return;
@@ -193,16 +249,70 @@ const App: React.FC = () => {
 
       <Header />
 
-      <div className="content">
-        <img
-          ref={imageRef}
-          src={imageUrl || "#"}
-          alt=""
-          style={{ display: imageUrl ? "block" : "none" }}
-          onLoad={handleImageLoad}
-        />
-        <canvas id="canvas" ref={canvasRef} />
+      <div className="mode-toggle">
+        <button
+          className={mode === 'camera' ? 'active' : ''}
+          onClick={handleCameraStart}
+          disabled={!session}
+        >
+          📷 Kamera
+        </button>
+        <button
+          className={mode === 'image' ? 'active' : ''}
+          onClick={handleImageMode}
+          disabled={!session}
+        >
+          🖼️ Bild
+        </button>
       </div>
+
+      {cameraError && (
+        <div className="error-message">
+          Kamera-Fehler: {cameraError}
+        </div>
+      )}
+
+      <div className="content">
+        {mode === 'camera' ? (
+          <>
+            <video
+              ref={videoRef}
+              style={{
+                display: cameraActive ? 'block' : 'none',
+                width: '100%',
+                maxWidth: '640px',
+                borderRadius: '8px',
+              }}
+              playsInline
+              muted
+            />
+            <canvas
+              ref={scanCanvasRef}
+              style={{
+                display: isScanning ? 'block' : 'none',
+                width: '100%',
+                maxWidth: '640px',
+                borderRadius: '8px',
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <img
+              ref={imageRef}
+              src={imageUrl || "#"}
+              alt=""
+              style={{ display: imageUrl ? "block" : "none" }}
+              onLoad={handleImageLoad}
+            />
+            <canvas id="canvas" ref={canvasRef} />
+          </>
+        )}
+      </div>
+
+      {mode === 'camera' && foundPlate && (
+        <PlateInfoCard plateInfo={foundPlate} confidence={scanConfidence} />
+      )}
 
       <input
         type="file"
@@ -213,8 +323,24 @@ const App: React.FC = () => {
       />
 
       <div className="btn-container">
-        <button onClick={openFilePicker}>Open local image</button>
-        {imageUrl && <button onClick={clearImage}>Close image</button>}
+        {mode === 'image' ? (
+          <>
+            <button onClick={openFilePicker}>Open local image</button>
+            {imageUrl && <button onClick={clearImage}>Close image</button>}
+          </>
+        ) : (
+          <>
+            {!cameraActive && !foundPlate && (
+              <button onClick={handleCameraStart}>Kamera starten</button>
+            )}
+            {cameraActive && (
+              <button onClick={handleCameraStop}>Kamera stoppen</button>
+            )}
+            {foundPlate && (
+              <button onClick={handleCameraStart}>Neu scannen</button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

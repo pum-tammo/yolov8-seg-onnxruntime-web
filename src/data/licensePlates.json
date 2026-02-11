@@ -1,0 +1,23 @@
+[
+  {
+    "plate": "MXC539E",
+    "owner": "Max Mustermann",
+    "vehicle": "BMW 3er",
+    "color": "Schwarz",
+    "notes": "VIP Parkplatz"
+  },
+  {
+    "plate": "XYZ789",
+    "owner": "Erika Beispiel",
+    "vehicle": "Mercedes C-Klasse",
+    "color": "Silber",
+    "notes": "Dauerparkplatz"
+  },
+  {
+    "plate": "DEF456",
+    "owner": "John Doe",
+    "vehicle": "Audi A4",
+    "color": "Blau",
+    "notes": "Gast"
+  }
+]

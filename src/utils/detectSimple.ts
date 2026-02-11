@@ -7,7 +7,7 @@ import { globalOCREngine, type OCRResult } from "./ocr/ocrEngine";
 // TYPES
 // ============================================================
 
-interface Box {
+export interface Box {
   label: string;
   probability: number;
   color: string;
@@ -21,8 +21,9 @@ interface Session {
 }
 
 
-
 // ============================================================
+// CONSTANTS & HELPERS
+// ============================================================// ============================================================
 // CONSTANTS & HELPERS
 // ============================================================
 
@@ -179,12 +180,28 @@ const processDetections = (
 // ============================================================
 
 const preprocessing = (
-  source: HTMLImageElement,
+  source: HTMLImageElement | HTMLVideoElement,
   modelWidth: number,
   modelHeight: number
 ): [any, number, number] => {
   const cv = getCV();
-  const mat = cv.imread(source);
+  
+  // Handle video elements by drawing to a temporary canvas first
+  let sourceElement: HTMLImageElement | HTMLCanvasElement = source as HTMLImageElement;
+  let tempCanvas: HTMLCanvasElement | null = null;
+  
+  if (source instanceof HTMLVideoElement) {
+    tempCanvas = document.createElement('canvas');
+    tempCanvas.width = source.videoWidth;
+    tempCanvas.height = source.videoHeight;
+    const ctx = tempCanvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(source, 0, 0);
+      sourceElement = tempCanvas;
+    }
+  }
+  
+  const mat = cv.imread(sourceElement);
   const matC3 = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3);
   cv.cvtColor(mat, matC3, cv.COLOR_RGBA2BGR);
 
@@ -234,17 +251,18 @@ const preprocessing = (
  * @param iouThreshold Float representing the threshold for deciding whether boxes overlap too much with respect to IOU
  * @param scoreThreshold Float representing the threshold for deciding when to remove boxes based on score
  * @param inputShape model input shape. Normally in YOLO model [batch, channels, width, height]
+ * @returns Array of detected boxes with OCR results
  */
 export const detectImageSimple = async (
-  image: HTMLImageElement,
+  image: HTMLImageElement | HTMLVideoElement,
   canvas: HTMLCanvasElement,
   session: Session,
   iouThreshold: number,
   scoreThreshold: number,
   inputShape: number[]
-): Promise<void> => {
+): Promise<Box[]> => {
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) return [];
   
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -268,6 +286,8 @@ export const detectImageSimple = async (
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   renderBoxes(ctx, boxesWithOCR);
+  
+  return boxesWithOCR;
 
   input.delete();
 };
