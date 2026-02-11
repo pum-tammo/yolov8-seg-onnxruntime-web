@@ -1,11 +1,11 @@
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import { renderBoxes, Colors } from "./renderBox";
 import labels from "./labels.json";
+import Tesseract from 'tesseract.js';
 
-// Access global cv from window - function to get it dynamically
-const getCV = () => (window as any).cv;
-
-const colors = new Colors();
+// ============================================================
+// TYPES
+// ============================================================
 
 interface Box {
   label: string;
@@ -17,6 +17,396 @@ interface Box {
 interface Session {
   net: InferenceSession;
 }
+
+interface OCRResult {
+  text: string;
+  confidence: number;
+  method: string;
+}
+
+interface PreprocessVariant {
+  name: string;
+  canvas: HTMLCanvasElement;
+  psm: Tesseract.PSM;
+}
+
+// ============================================================
+// CONSTANTS & HELPERS
+// ============================================================
+
+const colors = new Colors();
+const getCV = () => (window as any).cv;
+
+// ============================================================
+// IMAGE PREPROCESSING
+// ============================================================
+
+const toGrayscale = (data: Uint8ClampedArray): void => {
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    data[i] = data[i + 1] = data[i + 2] = gray;
+  }
+};
+
+const scaleImage = (source: HTMLCanvasElement, scale: number): HTMLCanvasElement => {
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width * scale;
+  canvas.height = source.height * scale;
+  
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return source;
+  
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  
+  return canvas;
+};
+
+const sharpenImage = (source: HTMLCanvasElement, scale: number): HTMLCanvasElement => {
+  const scaled = scaleImage(source, scale);
+  const ctx = scaled.getContext('2d');
+  if (!ctx) return scaled;
+  
+  const imageData = ctx.getImageData(0, 0, scaled.width, scaled.height);
+  const { data, width, height } = imageData;
+  
+  toGrayscale(data);
+  
+  const tempData = new Uint8ClampedArray(data);
+  
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = (y * width + x) * 4;
+      const center = tempData[idx];
+      const neighbors = [
+        tempData[((y - 1) * width + x) * 4],
+        tempData[((y + 1) * width + x) * 4],
+        tempData[(y * width + (x - 1)) * 4],
+        tempData[(y * width + (x + 1)) * 4]
+      ];
+      
+      const sharpened = 5 * center - neighbors.reduce((sum, val) => sum + val, 0);
+      const clamped = Math.max(0, Math.min(255, sharpened));
+      
+      data[idx] = data[idx + 1] = data[idx + 2] = clamped;
+    }
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+  return scaled;
+};
+
+const calculateLocalAverage = (
+  grayData: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  offset: number
+): number => {
+  let sum = 0;
+  let count = 0;
+  
+  const yMin = Math.max(0, y - offset);
+  const yMax = Math.min(height, y + offset + 1);
+  const xMin = Math.max(0, x - offset);
+  const xMax = Math.min(width, x + offset + 1);
+  
+  for (let wy = yMin; wy < yMax; wy++) {
+    for (let wx = xMin; wx < xMax; wx++) {
+      sum += grayData[wy * width + wx];
+      count++;
+    }
+  }
+  
+  return sum / count;
+};
+
+const adaptiveThreshold = (source: HTMLCanvasElement, scale: number): HTMLCanvasElement => {
+  const scaled = scaleImage(source, scale);
+  const ctx = scaled.getContext('2d');
+  if (!ctx) return scaled;
+  
+  const imageData = ctx.getImageData(0, 0, scaled.width, scaled.height);
+  const { data, width, height } = imageData;
+  
+  const grayData = new Uint8ClampedArray(width * height);
+  for (let i = 0; i < data.length; i += 4) {
+    grayData[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  
+  const windowSize = 15;
+  const offset = Math.floor(windowSize / 2);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const localAvg = calculateLocalAverage(grayData, width, height, x, y, offset);
+      const idx = (y * width + x) * 4;
+      const value = grayData[y * width + x] > localAvg - 10 ? 255 : 0;
+      data[idx] = data[idx + 1] = data[idx + 2] = value;
+    }
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+  return scaled;
+};
+
+const createPreprocessVariants = (canvas: HTMLCanvasElement): PreprocessVariant[] => [
+  { name: 'Scaled 4x', canvas: scaleImage(canvas, 4), psm: Tesseract.PSM.SINGLE_WORD },
+  { name: 'Scaled 4x (SINGLE_LINE)', canvas: scaleImage(canvas, 4), psm: Tesseract.PSM.SINGLE_LINE },
+  { name: 'Sharpened', canvas: sharpenImage(canvas, 4), psm: Tesseract.PSM.SINGLE_WORD },
+  { name: 'Adaptive Threshold', canvas: adaptiveThreshold(canvas, 4), psm: Tesseract.PSM.SINGLE_WORD }
+];
+
+// ============================================================
+// OCR & TEXT PROCESSING
+// ============================================================
+
+const cleanText = (text: string): string => 
+  text.toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+
+const calculateQualityScore = (text: string, confidence: number): number => {
+  const lengthScore = text.length * 10;
+  const hasLeadingError = /^[I1J]/.test(text);
+  const qualityPenalty = hasLeadingError ? -20 : 0;
+  return lengthScore + confidence + qualityPenalty;
+};
+
+const recognizeText = async (variant: PreprocessVariant): Promise<OCRResult> => {
+  console.log(`\nTrying method: ${variant.name}`);
+  console.log('Image:', variant.canvas.toDataURL('image/png'));
+  
+  const result = await Tesseract.recognize(
+    variant.canvas,
+    'eng',
+    {
+      logger: (m: any) => {
+        if (m.status === 'recognizing text') {
+          console.log(`  OCR Progress: ${Math.round(m.progress * 100)}%`);
+        }
+      },
+      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      tessedit_pageseg_mode: variant.psm,
+    } as any
+  );
+  
+  const rawText = result.data.text.trim();
+  const text = cleanText(rawText);
+  const confidence = result.data.confidence;
+  
+  console.log(`  Raw: "${rawText}" | Cleaned: "${text}" | Conf: ${confidence.toFixed(2)}%`);
+  
+  return { text, confidence, method: variant.name };
+};
+
+const selectBestResult = (results: OCRResult[]): OCRResult => {
+  const validResults = results.filter(r => r.text.length > 0);
+  
+  if (validResults.length === 0) {
+    return { text: '', confidence: 0, method: 'none' };
+  }
+  
+  return validResults.reduce((best, current) => {
+    const bestScore = calculateQualityScore(best.text, best.confidence);
+    const currentScore = calculateQualityScore(current.text, current.confidence);
+    return currentScore > bestScore ? current : best;
+  });
+};
+
+const performOCR = async (canvas: HTMLCanvasElement): Promise<OCRResult> => {
+  const variants = createPreprocessVariants(canvas);
+  
+  const results = await Promise.all(
+    variants.map(variant => 
+      recognizeText(variant).catch(error => {
+        console.error(`  Error with ${variant.name}:`, error);
+        return { text: '', confidence: 0, method: variant.name };
+      })
+    )
+  );
+  
+  return selectBestResult(results);
+};
+
+// ============================================================
+// LICENSE PLATE EXTRACTION
+// ============================================================
+
+const cropBox = (canvas: HTMLCanvasElement, box: Box): HTMLCanvasElement => {
+  const [x, y, width, height] = box.bounding;
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = width;
+  cropCanvas.height = height;
+  
+  const ctx = cropCanvas.getContext('2d');
+  if (!ctx) return cropCanvas;
+  
+  ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+  return cropCanvas;
+};
+
+const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement, index: number): Promise<void> => {
+  const cropCanvas = cropBox(canvas, box);
+  const dataUrl = cropCanvas.toDataURL('image/png');
+  
+  console.log(`License Plate ${index + 1} (${box.probability.toFixed(3)} confidence):`);
+  console.log(dataUrl);
+  console.log(`To view: Open a new tab and paste the data URL above into the address bar`);
+  
+  const bestResult = await performOCR(cropCanvas);
+  
+  console.log(`\n✓ Best Result: "${bestResult.text}" (${bestResult.confidence.toFixed(2)}%, ${bestResult.method})`);
+  console.log('---');
+};
+
+const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement): Promise<void> => {
+  await Promise.all(
+    boxes.map((box, index) => processLicensePlate(box, canvas, index))
+  );
+};
+
+// ============================================================
+// BOX DETECTION & NMS
+// ============================================================
+
+const calculateIoU = (box1: [number, number, number, number], box2: [number, number, number, number]): number => {
+  const [x1, y1, w1, h1] = box1;
+  const [x2, y2, w2, h2] = box2;
+
+  const xA = Math.max(x1, x2);
+  const yA = Math.max(y1, y2);
+  const xB = Math.min(x1 + w1, x2 + w2);
+  const yB = Math.min(y1 + h1, y2 + h2);
+
+  const intersectionArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
+  const unionArea = w1 * h1 + w2 * h2 - intersectionArea;
+
+  return intersectionArea / unionArea;
+};
+
+const nonMaxSuppression = (boxes: Box[], iouThreshold: number): Box[] => {
+  if (boxes.length === 0) return [];
+
+  const sortedBoxes = [...boxes].sort((a, b) => b.probability - a.probability);
+  const selected: Box[] = [];
+  const suppressed = new Set<number>();
+
+  sortedBoxes.forEach((box, i) => {
+    if (suppressed.has(i)) return;
+
+    selected.push(box);
+
+    sortedBoxes.slice(i + 1).forEach((otherBox, j) => {
+      const otherIndex = i + j + 1;
+      if (suppressed.has(otherIndex)) return;
+
+      const iou = calculateIoU(box.bounding, otherBox.bounding);
+      if (iou > iouThreshold) {
+        suppressed.add(otherIndex);
+      }
+    });
+  });
+
+  return selected;
+};
+
+const createBox = (
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  confidence: number,
+  xRatio: number,
+  yRatio: number
+): Box => {
+  const x1 = Math.max(0, Math.floor((x - w / 2) * xRatio));
+  const y1 = Math.max(0, Math.floor((y - h / 2) * yRatio));
+  const width = Math.floor(w * xRatio);
+  const height = Math.floor(h * yRatio);
+
+  return {
+    label: labels[0] || "license-plate",
+    probability: confidence,
+    color: colors.get(0),
+    bounding: [x1, y1, width, height],
+  };
+};
+
+const processDetections = (
+  output: any,
+  scoreThreshold: number,
+  xRatio: number,
+  yRatio: number
+): Box[] => {
+  const [, , numDetections] = output.dims;
+  const boxes: Box[] = [];
+
+  for (let i = 0; i < numDetections; i++) {
+    const x = output.data[i] as number;
+    const y = output.data[numDetections + i] as number;
+    const w = output.data[2 * numDetections + i] as number;
+    const h = output.data[3 * numDetections + i] as number;
+    const confidence = output.data[4 * numDetections + i] as number;
+
+    if (confidence > scoreThreshold) {
+      boxes.push(createBox(x, y, w, h, confidence, xRatio, yRatio));
+    }
+  }
+
+  return boxes;
+};
+
+// ============================================================
+// YOLO PREPROCESSING
+// ============================================================
+
+const preprocessing = (
+  source: HTMLImageElement,
+  modelWidth: number,
+  modelHeight: number
+): [any, number, number] => {
+  const cv = getCV();
+  const mat = cv.imread(source);
+  const matC3 = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3);
+  cv.cvtColor(mat, matC3, cv.COLOR_RGBA2BGR);
+
+  const { cols: originalWidth, rows: originalHeight } = mat;
+  const scale = Math.min(modelWidth / matC3.cols, modelHeight / matC3.rows);
+  const newWidth = Math.floor(matC3.cols * scale);
+  const newHeight = Math.floor(matC3.rows * scale);
+
+  cv.resize(matC3, matC3, new cv.Size(newWidth, newHeight));
+
+  const matPad = new cv.Mat();
+  cv.copyMakeBorder(
+    matC3,
+    matPad,
+    0,
+    modelHeight - newHeight,
+    0,
+    modelWidth - newWidth,
+    cv.BORDER_CONSTANT
+  );
+
+  const input = cv.blobFromImage(
+    matPad,
+    1 / 255.0,
+    new cv.Size(modelWidth, modelHeight),
+    new cv.Scalar(0, 0, 0),
+    true,
+    false
+  );
+
+  mat.delete();
+  matC3.delete();
+  matPad.delete();
+
+  return [input, originalWidth / newWidth, originalHeight / newHeight];
+};
+
+// ============================================================
+// MAIN DETECTION PIPELINE
+// ============================================================
 
 /**
  * Simple Detection (without segmentation)
@@ -38,7 +428,7 @@ export const detectImageSimple = async (
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); // clean canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const [modelWidth, modelHeight] = inputShape.slice(2);
   const [input, xRatio, yRatio] = preprocessing(image, modelWidth, modelHeight);
@@ -47,182 +437,13 @@ export const detectImageSimple = async (
   const output = await session.net.run({ images: tensor });
 
   const output0 = output[Object.keys(output)[0]];
-  const boxes: Box[] = [];
-  const [, , numDetections] = output0.dims;
-
-  // Data layout: [batch, features, detections]
-  // features = [x, y, w, h, confidence]
-  // All x values, then all y values, etc.
-  
-  // Process detections
-  for (let i = 0; i < numDetections; i++) {
-    const x = output0.data[i] as number;
-    const y = output0.data[numDetections + i] as number;
-    const w = output0.data[2 * numDetections + i] as number;
-    const h = output0.data[3 * numDetections + i] as number;
-    const confidence = output0.data[4 * numDetections + i] as number;
-
-    if (confidence > scoreThreshold) {
-      const color = colors.get(0);
-
-      // Model coordinates are relative to the padded input
-      // Scale back to original image dimensions
-      const x1 = Math.max(0, Math.floor((x - w / 2) * xRatio));
-      const y1 = Math.max(0, Math.floor((y - h / 2) * yRatio));
-      const width = Math.floor(w * xRatio);
-      const height = Math.floor(h * yRatio);
-
-      boxes.push({
-        label: labels[0] || "license-plate",
-        probability: confidence,
-        color: color,
-        bounding: [x1, y1, width, height],
-      });
-    }
-  }
-
-  // Simple NMS in JavaScript
+  const boxes = processDetections(output0, scoreThreshold, xRatio, yRatio);
   const selectedBoxes = nonMaxSuppression(boxes, iouThreshold);
 
-  // Draw on canvas
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   renderBoxes(ctx, selectedBoxes);
 
-  // Extract and log license plate crops as data URLs
-  extractLicensePlateCrops(image, selectedBoxes, canvas);
+  await extractLicensePlateCrops(selectedBoxes, canvas);
 
   input.delete();
-};
-
-/**
- * Extract license plate crops and log them as data URLs
- * @param image Original image
- * @param boxes Detected license plate boxes
- * @param canvas Canvas element (to crop from instead of image)
- */
-function extractLicensePlateCrops(image: HTMLImageElement, boxes: Box[], canvas: HTMLCanvasElement): void {
-  boxes.forEach((box, index) => {
-    const [x, y, width, height] = box.bounding;
-    
-    // Create a temporary canvas for the crop
-    const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = width;
-    cropCanvas.height = height;
-    
-    const cropCtx = cropCanvas.getContext('2d');
-    if (!cropCtx) return;
-    
-    // Crop from canvas which has the correct coordinate system
-    cropCtx.drawImage(
-      canvas,
-      x, y, width, height,  // Source rectangle from canvas
-      0, 0, width, height   // Destination rectangle
-    );
-    
-    // Convert to data URL
-    const dataUrl = cropCanvas.toDataURL('image/png');
-    
-    console.log(`License Plate ${index + 1} (${box.probability.toFixed(3)} confidence):`);
-    console.log(dataUrl);
-    console.log(`To view: Open a new tab and paste the data URL above into the address bar`);
-    console.log('---');
-  });
-}
-
-/**
- * Non-Maximum Suppression
- */
-function nonMaxSuppression(boxes: Box[], iouThreshold: number): Box[] {
-  if (boxes.length === 0) return [];
-
-  // Sort by probability
-  boxes.sort((a, b) => b.probability - a.probability);
-
-  const selected: Box[] = [];
-  const suppressed = new Set<number>();
-
-  for (let i = 0; i < boxes.length; i++) {
-    if (suppressed.has(i)) continue;
-
-    selected.push(boxes[i]);
-
-    for (let j = i + 1; j < boxes.length; j++) {
-      if (suppressed.has(j)) continue;
-
-      const iou = calculateIoU(boxes[i].bounding, boxes[j].bounding);
-      if (iou > iouThreshold) {
-        suppressed.add(j);
-      }
-    }
-  }
-
-  return selected;
-}
-
-/**
- * Calculate Intersection over Union
- */
-function calculateIoU(box1: [number, number, number, number], box2: [number, number, number, number]): number {
-  const [x1, y1, w1, h1] = box1;
-  const [x2, y2, w2, h2] = box2;
-
-  const xA = Math.max(x1, x2);
-  const yA = Math.max(y1, y2);
-  const xB = Math.min(x1 + w1, x2 + w2);
-  const yB = Math.min(y1 + h1, y2 + h2);
-
-  const intersectionArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
-  const box1Area = w1 * h1;
-  const box2Area = w2 * h2;
-  const unionArea = box1Area + box2Area - intersectionArea;
-
-  return intersectionArea / unionArea;
-}
-
-/**
- * Preprocessing image
- */
-const preprocessing = (source: HTMLImageElement, modelWidth: number, modelHeight: number): [any, number, number] => {
-  const cv = getCV();
-  const mat = cv.imread(source);
-  const matC3 = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3);
-  cv.cvtColor(mat, matC3, cv.COLOR_RGBA2BGR);
-
-  const originalWidth = mat.cols;
-  const originalHeight = mat.rows;
-
-  // Calculate scaling to maintain aspect ratio
-  const scale = Math.min(modelWidth / matC3.cols, modelHeight / matC3.rows);
-  const newWidth = Math.floor(matC3.cols * scale);
-  const newHeight = Math.floor(matC3.rows * scale);
-
-  cv.resize(matC3, matC3, new cv.Size(newWidth, newHeight));
-
-  // Padding
-  const matPad = new cv.Mat();
-  const top = 0;
-  const bottom = modelHeight - newHeight;
-  const left = 0;
-  const right = modelWidth - newWidth;
-  
-  cv.copyMakeBorder(matC3, matPad, top, bottom, left, right, cv.BORDER_CONSTANT);
-
-  const input = cv.blobFromImage(
-    matPad,
-    1 / 255.0,
-    new cv.Size(modelWidth, modelHeight),
-    new cv.Scalar(0, 0, 0),
-    true,
-    false
-  );
-
-  mat.delete();
-  matC3.delete();
-  matPad.delete();
-
-  // Return the inverse of the scale to convert from model coords to original coords
-  const xRatio = originalWidth / newWidth;
-  const yRatio = originalHeight / newHeight;
-
-  return [input, xRatio, yRatio];
 };

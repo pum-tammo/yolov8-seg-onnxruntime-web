@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import Loader from "./components/loader";
 import { detectImageSimple } from "./utils/detectSimple";
@@ -10,6 +10,7 @@ import * as ort from "onnxruntime-web";
 ort.env.wasm.wasmPaths = `${import.meta.env.BASE_URL}`;
 ort.env.wasm.numThreads = 1;
 
+// Types
 interface LoadingState {
   text: string;
   progress: number | null;
@@ -19,53 +20,151 @@ interface Session {
   net: InferenceSession;
 }
 
-const App: React.FC = () => {
+// Constants
+const MODEL_CONFIG = {
+  name: "license-plate.onnx",
+  inputShape: [1, 3, 640, 640],
+  iouThreshold: 0.3,
+  scoreThreshold: 0.25,
+};
+
+// Custom Hooks
+const useOpenCV = () => {
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    const checkOpenCV = () => {
+      const w = window as any;
+      if (typeof w.cv === 'undefined') {
+        setTimeout(checkOpenCV, 100);
+      } else {
+        setIsReady(true);
+      }
+    };
+    checkOpenCV();
+  }, []);
+
+  return isReady;
+};
+
+const useModelSession = (
+  openCVReady: boolean,
+  setLoading: (state: LoadingState | null) => void
+) => {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState<LoadingState | null>({ text: "Loading OpenCV.js", progress: null });
-  const [image, setImage] = useState<string | null>(null);
-  const inputImage = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!openCVReady) return;
+
+    const initModel = async () => {
+      const baseModelURL = `${import.meta.env.BASE_URL}model`;
+
+      const arrBufNet = await download(
+        `${baseModelURL}/${MODEL_CONFIG.name}`,
+        ["Loading License Plate Detection model", setLoading]
+      );
+      const yolov8 = await InferenceSession.create(arrBufNet);
+
+      setLoading({ text: "Warming up model...", progress: null });
+      const tensor = new Tensor(
+        "float32",
+        new Float32Array(MODEL_CONFIG.inputShape.reduce((a, b) => a * b)),
+        MODEL_CONFIG.inputShape
+      );
+      await yolov8.run({ images: tensor });
+
+      setSession({ net: yolov8 });
+      setLoading(null);
+    };
+
+    initModel();
+  }, [openCVReady, setLoading]);
+
+  return session;
+};
+
+const useImageUpload = () => {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const openFilePicker = useCallback(() => {
+    inputRef.current?.click();
+  }, []);
+
+  const setImage = useCallback((url: string | null) => {
+    setImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return url;
+    });
+  }, []);
+
+  const clearImage = useCallback(() => {
+    if (inputRef.current) inputRef.current.value = "";
+    setImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, []);
+
+  return { imageUrl, inputRef, openFilePicker, setImage, clearImage };
+};
+
+// Components
+const Header: React.FC = () => (
+  <div className="header">
+    <h1>License Plate Detection App</h1>
+    <p>
+      License plate detection application live on browser powered by{" "}
+      <code>onnxruntime-web</code>
+    </p>
+    <p>
+      Serving : <code className="code">{MODEL_CONFIG.name}</code>
+    </p>
+  </div>
+);
+
+const App: React.FC = () => {
+  const [loading, setLoading] = useState<LoadingState | null>({
+    text: "Loading OpenCV.js",
+    progress: null,
+  });
+
+  const openCVReady = useOpenCV();
+  const session = useModelSession(openCVReady, setLoading);
+  const { imageUrl, inputRef, openFilePicker, setImage, clearImage } = useImageUpload();
+
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // configs
-  const modelName = "license-plate.onnx";
-  const modelInputShape = [1, 3, 640, 640];
-  const iouThreshold = 0.3;
-  const scoreThreshold = 0.25;
+  const handleImageLoad = useCallback(() => {
+    if (!imageRef.current || !canvasRef.current || !session) return;
 
-  // wait until opencv.js initialized
-  React.useEffect(() => {
-    const initOpenCV = () => {
-      const w = window as any;
-      if (typeof w.cv === 'undefined') {
-        setTimeout(initOpenCV, 100);
-        return;
+    canvasRef.current.width = imageRef.current.width;
+    canvasRef.current.height = imageRef.current.height;
+
+    detectImageSimple(
+      imageRef.current,
+      canvasRef.current,
+      session,
+      MODEL_CONFIG.iouThreshold,
+      MODEL_CONFIG.scoreThreshold,
+      MODEL_CONFIG.inputShape
+    );
+  }, [session]);
+
+  const handleFileInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const url = URL.createObjectURL(file);
+      if (imageRef.current) {
+        imageRef.current.src = url;
       }
-      w.cv["onRuntimeInitialized"] = async () => {
-    const baseModelURL = `${import.meta.env.BASE_URL}model`;
-
-    // create session
-    const arrBufNet = await download(
-      `${baseModelURL}/${modelName}`, // url
-      ["Loading License Plate Detection model", setLoading] // logger
-    );
-    const yolov8 = await InferenceSession.create(arrBufNet);
-
-    // warmup main model
-    setLoading({ text: "Warming up model...", progress: null });
-    const tensor = new Tensor(
-      "float32",
-      new Float32Array(modelInputShape.reduce((a, b) => a * b)),
-      modelInputShape
-    );
-    await yolov8.run({ images: tensor });
-
-    setSession({ net: yolov8 });
-    setLoading(null);
-      };
-    };
-    initOpenCV();
-  }, []);
+      setImage(url);
+    },
+    [setImage]
+  );
 
   return (
     <div className="App">
@@ -74,89 +173,31 @@ const App: React.FC = () => {
           {loading.progress ? `${loading.text} - ${loading.progress}%` : loading.text}
         </Loader>
       )}
-      <div className="header">
-        <h1>License Plate Detection App</h1>
-        <p>
-          License plate detection application live on browser powered by{" "}
-          <code>onnxruntime-web</code>
-        </p>
-        <p>
-          Serving : <code className="code">{modelName}</code>
-        </p>
-      </div>
+      
+      <Header />
 
       <div className="content">
         <img
           ref={imageRef}
-          src="#"
+          src={imageUrl || "#"}
           alt=""
-          style={{ display: image ? "block" : "none" }}
-          onLoad={() => {
-            if (!imageRef.current || !canvasRef.current || !session) return;
-            
-            // Set canvas size to match displayed image size
-            canvasRef.current.width = imageRef.current.width;
-            canvasRef.current.height = imageRef.current.height;
-            
-            detectImageSimple(
-              imageRef.current,
-              canvasRef.current,
-              session,
-              iouThreshold,
-              scoreThreshold,
-              modelInputShape
-            );
-          }}
+          style={{ display: imageUrl ? "block" : "none" }}
+          onLoad={handleImageLoad}
         />
-        <canvas
-          id="canvas"
-          ref={canvasRef}
-        />
+        <canvas id="canvas" ref={canvasRef} />
       </div>
 
       <input
         type="file"
-        ref={inputImage}
+        ref={inputRef}
         accept="image/*"
         style={{ display: "none" }}
-        onChange={(e) => {
-          // handle next image to detect
-          if (image) {
-            URL.revokeObjectURL(image);
-            setImage(null);
-          }
-
-          const file = e.target.files?.[0];
-          if (!file) return;
-
-          const url = URL.createObjectURL(file); // create image url
-          if (imageRef.current) {
-            imageRef.current.src = url; // set image source
-          }
-          setImage(url);
-        }}
+        onChange={handleFileInput}
       />
+
       <div className="btn-container">
-        <button
-          onClick={() => {
-            inputImage.current?.click();
-          }}
-        >
-          Open local image
-        </button>
-        {image && (
-          /* show close btn when there is image */
-          <button
-            onClick={() => {
-              if (inputImage.current) inputImage.current.value = "";
-              if (imageRef.current) imageRef.current.src = "#";
-              URL.revokeObjectURL(image);
-              setImage(null);
-            }}
-          >
-            Close image
-          </button>
-        )}
+        <button onClick={openFilePicker}>Open local image</button>
+        {imageUrl && <button onClick={clearImage}>Close image</button>}
       </div>
     </div>
   );
