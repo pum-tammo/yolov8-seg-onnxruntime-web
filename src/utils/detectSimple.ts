@@ -1,7 +1,7 @@
 import { Tensor, InferenceSession } from "onnxruntime-web";
 import { renderBoxes, Colors } from "./renderBox";
 import labels from "./labels.json";
-import Tesseract from 'tesseract.js';
+import { globalOCREngine, type OCRResult } from "./ocr/ocrEngine";
 
 // ============================================================
 // TYPES
@@ -12,23 +12,15 @@ interface Box {
   probability: number;
   color: string;
   bounding: [number, number, number, number];
+  text?: string;
+  confidence?: number;
 }
 
 interface Session {
   net: InferenceSession;
 }
 
-interface OCRResult {
-  text: string;
-  confidence: number;
-  method: string;
-}
 
-interface PreprocessVariant {
-  name: string;
-  canvas: HTMLCanvasElement;
-  psm: Tesseract.PSM;
-}
 
 // ============================================================
 // CONSTANTS & HELPERS
@@ -38,194 +30,19 @@ const colors = new Colors();
 const getCV = () => (window as any).cv;
 
 // ============================================================
-// IMAGE PREPROCESSING
+// OCR PROCESSING
 // ============================================================
-
-const toGrayscale = (data: Uint8ClampedArray): void => {
-  for (let i = 0; i < data.length; i += 4) {
-    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    data[i] = data[i + 1] = data[i + 2] = gray;
-  }
-};
-
-const scaleImage = (source: HTMLCanvasElement, scale: number): HTMLCanvasElement => {
-  const canvas = document.createElement('canvas');
-  canvas.width = source.width * scale;
-  canvas.height = source.height * scale;
-  
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return source;
-  
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-  
-  return canvas;
-};
-
-const sharpenImage = (source: HTMLCanvasElement, scale: number): HTMLCanvasElement => {
-  const scaled = scaleImage(source, scale);
-  const ctx = scaled.getContext('2d');
-  if (!ctx) return scaled;
-  
-  const imageData = ctx.getImageData(0, 0, scaled.width, scaled.height);
-  const { data, width, height } = imageData;
-  
-  toGrayscale(data);
-  
-  const tempData = new Uint8ClampedArray(data);
-  
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const idx = (y * width + x) * 4;
-      const center = tempData[idx];
-      const neighbors = [
-        tempData[((y - 1) * width + x) * 4],
-        tempData[((y + 1) * width + x) * 4],
-        tempData[(y * width + (x - 1)) * 4],
-        tempData[(y * width + (x + 1)) * 4]
-      ];
-      
-      const sharpened = 5 * center - neighbors.reduce((sum, val) => sum + val, 0);
-      const clamped = Math.max(0, Math.min(255, sharpened));
-      
-      data[idx] = data[idx + 1] = data[idx + 2] = clamped;
-    }
-  }
-  
-  ctx.putImageData(imageData, 0, 0);
-  return scaled;
-};
-
-const calculateLocalAverage = (
-  grayData: Uint8ClampedArray,
-  width: number,
-  height: number,
-  x: number,
-  y: number,
-  offset: number
-): number => {
-  let sum = 0;
-  let count = 0;
-  
-  const yMin = Math.max(0, y - offset);
-  const yMax = Math.min(height, y + offset + 1);
-  const xMin = Math.max(0, x - offset);
-  const xMax = Math.min(width, x + offset + 1);
-  
-  for (let wy = yMin; wy < yMax; wy++) {
-    for (let wx = xMin; wx < xMax; wx++) {
-      sum += grayData[wy * width + wx];
-      count++;
-    }
-  }
-  
-  return sum / count;
-};
-
-const adaptiveThreshold = (source: HTMLCanvasElement, scale: number): HTMLCanvasElement => {
-  const scaled = scaleImage(source, scale);
-  const ctx = scaled.getContext('2d');
-  if (!ctx) return scaled;
-  
-  const imageData = ctx.getImageData(0, 0, scaled.width, scaled.height);
-  const { data, width, height } = imageData;
-  
-  const grayData = new Uint8ClampedArray(width * height);
-  for (let i = 0; i < data.length; i += 4) {
-    grayData[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-  }
-  
-  const windowSize = 15;
-  const offset = Math.floor(windowSize / 2);
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const localAvg = calculateLocalAverage(grayData, width, height, x, y, offset);
-      const idx = (y * width + x) * 4;
-      const value = grayData[y * width + x] > localAvg - 10 ? 255 : 0;
-      data[idx] = data[idx + 1] = data[idx + 2] = value;
-    }
-  }
-  
-  ctx.putImageData(imageData, 0, 0);
-  return scaled;
-};
-
-const createPreprocessVariants = (canvas: HTMLCanvasElement): PreprocessVariant[] => [
-  { name: 'Scaled 4x', canvas: scaleImage(canvas, 4), psm: Tesseract.PSM.SINGLE_WORD },
-  { name: 'Scaled 4x (SINGLE_LINE)', canvas: scaleImage(canvas, 4), psm: Tesseract.PSM.SINGLE_LINE },
-  { name: 'Sharpened', canvas: sharpenImage(canvas, 4), psm: Tesseract.PSM.SINGLE_WORD },
-  { name: 'Adaptive Threshold', canvas: adaptiveThreshold(canvas, 4), psm: Tesseract.PSM.SINGLE_WORD }
-];
-
-// ============================================================
-// OCR & TEXT PROCESSING
-// ============================================================
-
-const cleanText = (text: string): string => 
-  text.toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
-
-const calculateQualityScore = (text: string, confidence: number): number => {
-  const lengthScore = text.length * 10;
-  const hasLeadingError = /^[I1J]/.test(text);
-  const qualityPenalty = hasLeadingError ? -20 : 0;
-  return lengthScore + confidence + qualityPenalty;
-};
-
-const recognizeText = async (variant: PreprocessVariant): Promise<OCRResult> => {
-  console.log(`\nTrying method: ${variant.name}`);
-  console.log('Image:', variant.canvas.toDataURL('image/png'));
-  
-  const result = await Tesseract.recognize(
-    variant.canvas,
-    'eng',
-    {
-      logger: (m: any) => {
-        if (m.status === 'recognizing text') {
-          console.log(`  OCR Progress: ${Math.round(m.progress * 100)}%`);
-        }
-      },
-      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-      tessedit_pageseg_mode: variant.psm,
-    } as any
-  );
-  
-  const rawText = result.data.text.trim();
-  const text = cleanText(rawText);
-  const confidence = result.data.confidence;
-  
-  console.log(`  Raw: "${rawText}" | Cleaned: "${text}" | Conf: ${confidence.toFixed(2)}%`);
-  
-  return { text, confidence, method: variant.name };
-};
-
-const selectBestResult = (results: OCRResult[]): OCRResult => {
-  const validResults = results.filter(r => r.text.length > 0);
-  
-  if (validResults.length === 0) {
-    return { text: '', confidence: 0, method: 'none' };
-  }
-  
-  return validResults.reduce((best, current) => {
-    const bestScore = calculateQualityScore(best.text, best.confidence);
-    const currentScore = calculateQualityScore(current.text, current.confidence);
-    return currentScore > bestScore ? current : best;
-  });
-};
 
 const performOCR = async (canvas: HTMLCanvasElement): Promise<OCRResult> => {
-  const variants = createPreprocessVariants(canvas);
-  
-  const results = await Promise.all(
-    variants.map(variant => 
-      recognizeText(variant).catch(error => {
-        console.error(`  Error with ${variant.name}:`, error);
-        return { text: '', confidence: 0, method: variant.name };
-      })
-    )
-  );
-  
-  return selectBestResult(results);
+  try {
+    // Use ONNX OCR Engine
+    const result = await globalOCREngine.recognize(canvas);
+    console.log(`OCR Result: "${result.text}" (Confidence: ${result.confidence}%)`);
+    return result;
+  } catch (error) {
+    console.error('OCR failed:', error);
+    return { text: '', confidence: 0 };
+  }
 };
 
 // ============================================================
@@ -245,24 +62,36 @@ const cropBox = (canvas: HTMLCanvasElement, box: Box): HTMLCanvasElement => {
   return cropCanvas;
 };
 
-const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement, index: number): Promise<void> => {
+const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement, index: number): Promise<Box> => {
   const cropCanvas = cropBox(canvas, box);
-  const dataUrl = cropCanvas.toDataURL('image/png');
   
-  console.log(`License Plate ${index + 1} (${box.probability.toFixed(3)} confidence):`);
-  console.log(dataUrl);
-  console.log(`To view: Open a new tab and paste the data URL above into the address bar`);
+  console.log(`\nLicense Plate ${index + 1}:`);
+  console.log(`  Detection Confidence: ${(box.probability * 100).toFixed(1)}%`);
   
-  const bestResult = await performOCR(cropCanvas);
+  // Perform OCR
+  const ocrResult = await performOCR(cropCanvas);
   
-  console.log(`\n✓ Best Result: "${bestResult.text}" (${bestResult.confidence.toFixed(2)}%, ${bestResult.method})`);
+  // Add OCR result to box
+  box.text = ocrResult.text;
+  box.confidence = ocrResult.confidence;
+  
+  if (ocrResult.text) {
+    console.log(`  ✓ Recognized Text: "${ocrResult.text}"`);
+    console.log(`  OCR Confidence: ${ocrResult.confidence}%`);
+  } else {
+    console.log(`  ✗ No text recognized`);
+  }
   console.log('---');
+  
+  return box;
 };
 
-const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement): Promise<void> => {
-  await Promise.all(
+const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement): Promise<Box[]> => {
+  // Process all boxes and add OCR results
+  const processedBoxes = await Promise.all(
     boxes.map((box, index) => processLicensePlate(box, canvas, index))
   );
+  return processedBoxes;
 };
 
 // ============================================================
@@ -443,7 +272,13 @@ export const detectImageSimple = async (
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   renderBoxes(ctx, selectedBoxes);
 
-  await extractLicensePlateCrops(selectedBoxes, canvas);
+  // Extract and recognize license plates
+  const boxesWithOCR = await extractLicensePlateCrops(selectedBoxes, canvas);
+
+  // Re-render with OCR results
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  renderBoxes(ctx, boxesWithOCR);
 
   input.delete();
 };

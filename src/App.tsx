@@ -3,6 +3,7 @@ import { Tensor, InferenceSession } from "onnxruntime-web";
 import Loader from "./components/loader";
 import { detectImageSimple } from "./utils/detectSimple";
 import { download } from "./utils/download";
+import { globalOCREngine } from "./utils/ocr/ocrEngine";
 import "./style/App.css";
 
 // Configure ONNX Runtime WebAssembly paths
@@ -59,19 +60,24 @@ const useModelSession = (
     const initModel = async () => {
       const baseModelURL = `${import.meta.env.BASE_URL}model`;
 
+      // Load License Plate Detection model
       const arrBufNet = await download(
         `${baseModelURL}/${MODEL_CONFIG.name}`,
         ["Loading License Plate Detection model", setLoading]
       );
       const yolov8 = await InferenceSession.create(arrBufNet);
 
-      setLoading({ text: "Warming up model...", progress: null });
+      setLoading({ text: "Warming up detection model...", progress: null });
       const tensor = new Tensor(
         "float32",
         new Float32Array(MODEL_CONFIG.inputShape.reduce((a, b) => a * b)),
         MODEL_CONFIG.inputShape
       );
       await yolov8.run({ images: tensor });
+
+      // Load OCR model
+      setLoading({ text: "Loading OCR model...", progress: null });
+      await globalOCREngine.initialize(`${baseModelURL}/plate-ocr.onnx`);
 
       setSession({ net: yolov8 });
       setLoading(null);
