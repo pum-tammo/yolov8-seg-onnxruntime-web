@@ -35,7 +35,8 @@ export const renderBoxes = (ctx: CanvasRenderingContext2D, boxes: Box[]): void =
     // Prepare label text
     let labelText = klass + " - " + score + "%";
     if (box.text) {
-      labelText = box.text + " (" + score + "%)";
+      const ocrScore = (box.confidence || 0).toFixed(1);
+      labelText = box.text + " (" + ocrScore + "%)";
     }
 
     // draw the label background.
@@ -53,34 +54,6 @@ export const renderBoxes = (ctx: CanvasRenderingContext2D, boxes: Box[]): void =
     // Draw labels
     ctx.fillStyle = "#ffffff";
     ctx.fillText(labelText, x1 - 1, yText < 0 ? 1 : yText + 1);
-
-    // Draw OCR text inside the box if available
-    if (box.text) {
-      const fontSize = Math.max(Math.round(height / 3), 20);
-      ctx.font = `bold ${fontSize}px Arial`;
-      ctx.fillStyle = color;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      
-      // Add shadow for better readability
-      ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetX = 2;
-      ctx.shadowOffsetY = 2;
-      
-      ctx.fillText(box.text, x1 + width / 2, y1 + height / 2);
-      
-      // Reset shadow
-      ctx.shadowColor = "transparent";
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
-      
-      // Reset font and alignment
-      ctx.font = font;
-      ctx.textAlign = "start";
-      ctx.textBaseline = "top";
-    }
   });
 };
 

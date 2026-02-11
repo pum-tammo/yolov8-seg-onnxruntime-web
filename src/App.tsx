@@ -11,6 +11,12 @@ import * as ort from "onnxruntime-web";
 ort.env.wasm.wasmPaths = `${import.meta.env.BASE_URL}`;
 ort.env.wasm.numThreads = 1;
 
+// Configure execution providers: WebGL (fast) with WASM fallback (compatible)
+const executionProviders: ort.InferenceSession.ExecutionProviderConfig[] = [
+  'webgl',
+  'wasm'
+];
+
 // Types
 interface LoadingState {
   text: string;
@@ -36,7 +42,7 @@ const useOpenCV = () => {
   useEffect(() => {
     const checkOpenCV = () => {
       const w = window as any;
-      if (typeof w.cv === 'undefined') {
+      if (typeof w.cv === "undefined") {
         setTimeout(checkOpenCV, 100);
       } else {
         setIsReady(true);
@@ -50,7 +56,7 @@ const useOpenCV = () => {
 
 const useModelSession = (
   openCVReady: boolean,
-  setLoading: (state: LoadingState | null) => void
+  setLoading: (state: LoadingState | null) => void,
 ) => {
   const [session, setSession] = useState<Session | null>(null);
 
@@ -61,17 +67,19 @@ const useModelSession = (
       const baseModelURL = `${import.meta.env.BASE_URL}model`;
 
       // Load License Plate Detection model
-      const arrBufNet = await download(
-        `${baseModelURL}/${MODEL_CONFIG.name}`,
-        ["Loading License Plate Detection model", setLoading]
-      );
-      const yolov8 = await InferenceSession.create(arrBufNet);
+      const arrBufNet = await download(`${baseModelURL}/${MODEL_CONFIG.name}`, [
+        "Loading License Plate Detection model",
+        setLoading,
+      ]);
+      const yolov8 = await InferenceSession.create(arrBufNet, {
+        executionProviders,
+      });
 
       setLoading({ text: "Warming up detection model...", progress: null });
       const tensor = new Tensor(
         "float32",
         new Float32Array(MODEL_CONFIG.inputShape.reduce((a, b) => a * b)),
-        MODEL_CONFIG.inputShape
+        MODEL_CONFIG.inputShape,
       );
       await yolov8.run({ images: tensor });
 
@@ -118,13 +126,13 @@ const useImageUpload = () => {
 // Components
 const Header: React.FC = () => (
   <div className="header">
-    <h1>License Plate Detection App</h1>
+    <h1>License Plate Recognition</h1>
     <p>
-      License plate detection application live on browser powered by{" "}
+      Automatic License Plate Recognition (ALPR) powered by{" "}
       <code>onnxruntime-web</code>
     </p>
     <p>
-      Serving : <code className="code">{MODEL_CONFIG.name}</code>
+      YOLOv8 Detection + MobileViT OCR
     </p>
   </div>
 );
@@ -137,7 +145,8 @@ const App: React.FC = () => {
 
   const openCVReady = useOpenCV();
   const session = useModelSession(openCVReady, setLoading);
-  const { imageUrl, inputRef, openFilePicker, setImage, clearImage } = useImageUpload();
+  const { imageUrl, inputRef, openFilePicker, setImage, clearImage } =
+    useImageUpload();
 
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -154,7 +163,7 @@ const App: React.FC = () => {
       session,
       MODEL_CONFIG.iouThreshold,
       MODEL_CONFIG.scoreThreshold,
-      MODEL_CONFIG.inputShape
+      MODEL_CONFIG.inputShape,
     );
   }, [session]);
 
@@ -169,17 +178,19 @@ const App: React.FC = () => {
       }
       setImage(url);
     },
-    [setImage]
+    [setImage],
   );
 
   return (
     <div className="App">
       {loading && (
         <Loader>
-          {loading.progress ? `${loading.text} - ${loading.progress}%` : loading.text}
+          {loading.progress
+            ? `${loading.text} - ${loading.progress}%`
+            : loading.text}
         </Loader>
       )}
-      
+
       <Header />
 
       <div className="content">

@@ -35,9 +35,10 @@ const getCV = () => (window as any).cv;
 
 const performOCR = async (canvas: HTMLCanvasElement): Promise<OCRResult> => {
   try {
-    // Use ONNX OCR Engine
     const result = await globalOCREngine.recognize(canvas);
-    console.log(`OCR Result: "${result.text}" (Confidence: ${result.confidence}%)`);
+    if (result.text) {
+      console.log(`✓ OCR: "${result.text}" (${result.confidence.toFixed(1)}%)`);
+    }
     return result;
   } catch (error) {
     console.error('OCR failed:', error);
@@ -62,36 +63,24 @@ const cropBox = (canvas: HTMLCanvasElement, box: Box): HTMLCanvasElement => {
   return cropCanvas;
 };
 
-const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement, index: number): Promise<Box> => {
+const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement): Promise<Box> => {
   const cropCanvas = cropBox(canvas, box);
   
-  console.log(`\nLicense Plate ${index + 1}:`);
-  console.log(`  Detection Confidence: ${(box.probability * 100).toFixed(1)}%`);
+  // Log cropped license plate image
+  console.debug('Cropped plate:', cropCanvas.toDataURL('image/png'));
   
-  // Perform OCR
   const ocrResult = await performOCR(cropCanvas);
   
-  // Add OCR result to box
   box.text = ocrResult.text;
   box.confidence = ocrResult.confidence;
-  
-  if (ocrResult.text) {
-    console.log(`  ✓ Recognized Text: "${ocrResult.text}"`);
-    console.log(`  OCR Confidence: ${ocrResult.confidence}%`);
-  } else {
-    console.log(`  ✗ No text recognized`);
-  }
-  console.log('---');
   
   return box;
 };
 
 const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement): Promise<Box[]> => {
-  // Process all boxes and add OCR results
-  const processedBoxes = await Promise.all(
-    boxes.map((box, index) => processLicensePlate(box, canvas, index))
+  return await Promise.all(
+    boxes.map((box) => processLicensePlate(box, canvas))
   );
-  return processedBoxes;
 };
 
 // ============================================================

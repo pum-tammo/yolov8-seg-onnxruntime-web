@@ -14,12 +14,11 @@ export class PlateOCREngine {
     this.config = config;
   }
 
-  /**
-   * Initialize the OCR model
-   */
   async initialize(modelPath: string): Promise<void> {
     try {
-      this.session = await InferenceSession.create(modelPath);
+      this.session = await InferenceSession.create(modelPath, {
+        executionProviders: ['webgl', 'wasm'],
+      });
       console.log('OCR model loaded successfully');
     } catch (error) {
       console.error('Failed to load OCR model:', error);
@@ -27,14 +26,9 @@ export class PlateOCREngine {
     }
   }
 
-  /**
-   * Preprocess image for OCR
-   * Resizes to model input size and converts to Grayscale
-   */
   private preprocessImage(canvas: HTMLCanvasElement): Uint8Array {
     const { imgWidth, imgHeight } = this.config;
     
-    // Create temporary canvas for resizing
     const resizeCanvas = document.createElement('canvas');
     resizeCanvas.width = imgWidth;
     resizeCanvas.height = imgHeight;
@@ -44,17 +38,14 @@ export class PlateOCREngine {
       throw new Error('Failed to get canvas context');
     }
 
-    // Resize image (using bilinear interpolation)
     resizeCtx.imageSmoothingEnabled = true;
     resizeCtx.imageSmoothingQuality = 'high';
     resizeCtx.drawImage(canvas, 0, 0, imgWidth, imgHeight);
 
-    // Get image data
     const imageData = resizeCtx.getImageData(0, 0, imgWidth, imgHeight);
     const { data } = imageData;
 
-    // Convert to Grayscale format (HW1) as uint8
-    // Using standard luminance formula: 0.299*R + 0.587*G + 0.114*B
+    // Convert to Grayscale: 0.299*R + 0.587*G + 0.114*B
     const grayData = new Uint8Array(imgHeight * imgWidth);
     
     for (let i = 0; i < data.length / 4; i++) {

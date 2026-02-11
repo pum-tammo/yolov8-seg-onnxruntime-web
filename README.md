@@ -1,4 +1,4 @@
-# YOLOv8 Segmentation with onnxruntime-web
+# License Plate Recognition with onnxruntime-web
 
 <p align="center">
   <img src="./sample.png" />
@@ -11,42 +11,53 @@
 
 ---
 
-Object Segmentation application right in your browser.
-Serving YOLOv8 segmentation in browser using onnxruntime-web with `wasm` backend.
+**Automatic License Plate Recognition (ALPR)** application running entirely in your browser.
+Combines YOLOv8 detection with fast-plate-ocr for end-to-end license plate recognition using onnxruntime-web with `wasm` backend.
+
+## Features
+
+- 🚗 **License Plate Detection** - YOLOv8 model detects plates in images
+- 🔤 **Text Recognition** - ONNX OCR model reads plate numbers
+- 🌍 **Global Support** - Recognizes plates from 65+ countries
+- ⚡ **Fast** - Runs entirely in browser with WebAssembly
+- 🎯 **Real-time** - Instant results with visual feedback
 
 ## Setup
 
 ```bash
 git clone https://github.com/Hyuto/yolov8-seg-onnxruntime-web.git
 cd yolov8-seg-onnxruntime-web
-yarn install # Install dependencies
+npm install # Install dependencies
 ```
 
 ## Scripts
 
 ```bash
-yarn start # Start dev server
-yarn build # Build for productions
+npm start # Start dev server
+npm build # Build for production
 ```
 
 ## Models
 
-**Main Model**
+**Detection Model**
 
-YOLOv8n-seg model converted to onnx.
+YOLOv8n model fine-tuned for license plate detection.
 
 ```
-used model : yolov8n-seg.onnx
-size       : 14 Mb
+model : license-plate.onnx
+size  : ~6 MB
 ```
 
-**NMS**
+**OCR Model**
 
-ONNX model to perform NMS operator [CUSTOM].
+Global license plate OCR model from [fast-plate-ocr](https://github.com/ankandrew/fast-plate-ocr).
 
-[![nms-yolov8.onnx](https://img.shields.io/badge/nms--yolov8.onnx-black?logo=onnx)](https://netron.app/?url=https://raw.githubusercontent.com/Hyuto/yolov8-seg-onnxruntime-web/master/public/model/nms-yolov8.onnx)
-
-**Mask**
+```
+model    : plate-ocr.onnx (MobileViT-v2)
+size     : ~660 KB
+supports : 65+ countries
+alphabet : 0-9, A-Z
+```
 
 ONNX model to produce mask for every object detected [CUSTOM].
 
