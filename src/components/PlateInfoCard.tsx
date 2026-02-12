@@ -1,13 +1,16 @@
-import React from 'react';
-import type { PlateInfo } from '../types';
-import './PlateInfoCard.css';
+import React from "react";
+import type { PlateInfo } from "../types";
+import "./PlateInfoCard.css";
 
 interface PlateInfoCardProps {
   plateInfo: PlateInfo | null;
   confidence?: number;
 }
 
-export const PlateInfoCard: React.FC<PlateInfoCardProps> = ({ plateInfo, confidence }) => {
+export const PlateInfoCard: React.FC<PlateInfoCardProps> = ({
+  plateInfo,
+  confidence,
+}) => {
   if (!plateInfo) {
     return (
       <div className="plate-info-card empty">
@@ -25,7 +28,7 @@ export const PlateInfoCard: React.FC<PlateInfoCardProps> = ({ plateInfo, confide
           <span className="confidence">{confidence.toFixed(1)}%</span>
         )}
       </div>
-      
+
       <div className="plate-details">
         <div className="detail-row">
           <span className="label">Besitzer:</span>

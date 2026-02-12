@@ -1,246 +1,24 @@
-import { Tensor } from "onnxruntime-web";
-import { renderBoxes, Colors } from "./renderBox";
-import labels from "./labels.json";
-import { globalOCREngine } from "./ocr/ocrEngine";
-import type { DetectionBox, BoundingBox, Session, OCRResult } from "../types";
-
-
-// ============================================================
-// CONSTANTS & HELPERS
-// ============================================================// ============================================================
-// CONSTANTS & HELPERS
-// ============================================================
-
-const colors = new Colors();
-const getCV = () => (window as any).cv;
-
-// ============================================================
-// OCR PROCESSING
-// ============================================================
-
-const performOCR = async (canvas: HTMLCanvasElement): Promise<OCRResult> => {
-  try {
-    const result = await globalOCREngine.recognize(canvas);
-    if (result.text) {
-      console.log(`✓ OCR: "${result.text}" (${result.confidence.toFixed(1)}%)`);
-    }
-    return result;
-  } catch (error) {
-    console.error('OCR failed:', error);
-    return { text: '', confidence: 0 };
-  }
-};
-
-// ============================================================
-// LICENSE PLATE EXTRACTION
-// ============================================================
-
-const cropBox = (canvas: HTMLCanvasElement, box: DetectionBox): HTMLCanvasElement => {
-  const [x, y, width, height] = box.bounding;
-  const cropCanvas = document.createElement('canvas');
-  cropCanvas.width = width;
-  cropCanvas.height = height;
-  
-  const ctx = cropCanvas.getContext('2d');
-  if (!ctx) return cropCanvas;
-  
-  ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
-  return cropCanvas;
-};
-
-const processLicensePlate = async (box: DetectionBox, canvas: HTMLCanvasElement): Promise<DetectionBox> => {
-  const cropCanvas = cropBox(canvas, box);
-  
-  // Log cropped license plate image
-  console.debug('Cropped plate:', cropCanvas.toDataURL('image/png'));
-  
-  const ocrResult = await performOCR(cropCanvas);
-  
-  return {
-    ...box,
-    text: ocrResult.text,
-    confidence: ocrResult.confidence,
-  };
-};
-
-const extractLicensePlateCrops = async (boxes: readonly DetectionBox[], canvas: HTMLCanvasElement): Promise<DetectionBox[]> => {
-  // Process sequentially to avoid "Session already started" error
-  // ONNX Runtime sessions cannot handle concurrent run() calls
-  const results: DetectionBox[] = [];
-  for (const box of boxes) {
-    const result = await processLicensePlate(box, canvas);
-    results.push(result);
-  }
-  return results;
-};
-
-// ============================================================
-// BOX DETECTION & NMS
-// ============================================================
-
-const calculateIoU = (box1: BoundingBox, box2: BoundingBox): number => {
-  const [x1, y1, w1, h1] = box1;
-  const [x2, y2, w2, h2] = box2;
-
-  const xA = Math.max(x1, x2);
-  const yA = Math.max(y1, y2);
-  const xB = Math.min(x1 + w1, x2 + w2);
-  const yB = Math.min(y1 + h1, y2 + h2);
-
-  const intersectionArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
-  const unionArea = w1 * h1 + w2 * h2 - intersectionArea;
-
-  return intersectionArea / unionArea;
-};
-
-const nonMaxSuppression = (boxes: readonly DetectionBox[], iouThreshold: number): DetectionBox[] => {
-  if (boxes.length === 0) return [];
-
-  const sortedBoxes = [...boxes].sort((a, b) => b.probability - a.probability);
-  const selected: DetectionBox[] = [];
-  const suppressed = new Set<number>();
-
-  sortedBoxes.forEach((box, i) => {
-    if (suppressed.has(i)) return;
-
-    selected.push(box);
-
-    sortedBoxes.slice(i + 1).forEach((otherBox, j) => {
-      const otherIndex = i + j + 1;
-      if (suppressed.has(otherIndex)) return;
-
-      const iou = calculateIoU(box.bounding, otherBox.bounding);
-      if (iou > iouThreshold) {
-        suppressed.add(otherIndex);
-      }
-    });
-  });
-
-  return selected;
-};
-
-const createBox = (
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  confidence: number,
-  xRatio: number,
-  yRatio: number
-): DetectionBox => {
-  const x1 = Math.max(0, Math.floor((x - w / 2) * xRatio));
-  const y1 = Math.max(0, Math.floor((y - h / 2) * yRatio));
-  const width = Math.floor(w * xRatio);
-  const height = Math.floor(h * yRatio);
-
-  return {
-    label: labels[0] || "license-plate",
-    probability: confidence,
-    color: colors.get(0),
-    bounding: [x1, y1, width, height] as BoundingBox,
-  };
-};
-
-const processDetections = (
-  output: Tensor,
-  scoreThreshold: number,
-  xRatio: number,
-  yRatio: number
-): DetectionBox[] => {
-  const [, , numDetections] = output.dims;
-  const boxes: DetectionBox[] = [];
-
-  for (let i = 0; i < numDetections; i++) {
-    const x = output.data[i] as number;
-    const y = output.data[numDetections + i] as number;
-    const w = output.data[2 * numDetections + i] as number;
-    const h = output.data[3 * numDetections + i] as number;
-    const confidence = output.data[4 * numDetections + i] as number;
-
-    if (confidence > scoreThreshold) {
-      boxes.push(createBox(x, y, w, h, confidence, xRatio, yRatio));
-    }
-  }
-
-  return boxes;
-};
-
-// ============================================================
-// YOLO PREPROCESSING
-// ============================================================
-
-const preprocessing = (
-  source: HTMLImageElement | HTMLVideoElement,
-  modelWidth: number,
-  modelHeight: number
-): [any, number, number] => {
-  const cv = getCV();
-  
-  // Handle video elements by drawing to a temporary canvas first
-  let sourceElement: HTMLImageElement | HTMLCanvasElement = source as HTMLImageElement;
-  let tempCanvas: HTMLCanvasElement | null = null;
-  
-  if (source instanceof HTMLVideoElement) {
-    tempCanvas = document.createElement('canvas');
-    tempCanvas.width = source.videoWidth;
-    tempCanvas.height = source.videoHeight;
-    const ctx = tempCanvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(source, 0, 0);
-      sourceElement = tempCanvas;
-    }
-  }
-  
-  const mat = cv.imread(sourceElement);
-  const matC3 = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3);
-  cv.cvtColor(mat, matC3, cv.COLOR_RGBA2BGR);
-
-  const { cols: originalWidth, rows: originalHeight } = mat;
-  const scale = Math.min(modelWidth / matC3.cols, modelHeight / matC3.rows);
-  const newWidth = Math.floor(matC3.cols * scale);
-  const newHeight = Math.floor(matC3.rows * scale);
-
-  cv.resize(matC3, matC3, new cv.Size(newWidth, newHeight));
-
-  const matPad = new cv.Mat();
-  cv.copyMakeBorder(
-    matC3,
-    matPad,
-    0,
-    modelHeight - newHeight,
-    0,
-    modelWidth - newWidth,
-    cv.BORDER_CONSTANT
-  );
-
-  const input = cv.blobFromImage(
-    matPad,
-    1 / 255.0,
-    new cv.Size(modelWidth, modelHeight),
-    new cv.Scalar(0, 0, 0),
-    true,
-    false
-  );
-
-  mat.delete();
-  matC3.delete();
-  matPad.delete();
-
-  return [input, originalWidth / newWidth, originalHeight / newHeight];
-};
-
-// ============================================================
-// MAIN DETECTION PIPELINE
-// ============================================================
+import type { DetectionBox, Session } from "../types";
+import { detectObjects } from "./detection/yoloDetection";
+import { extractLicensePlates } from "./detection/plateExtractor";
+import { createCanvas, drawToCanvas } from "./canvas/canvasUtils";
 
 /**
- * Simple Detection (without segmentation)
- * @param image Image to detect
- * @param canvas canvas to draw boxes
- * @param session YOLO onnxruntime session
- * @param iouThreshold Float representing the threshold for deciding whether boxes overlap too much with respect to IOU
- * @param scoreThreshold Float representing the threshold for deciding when to remove boxes based on score
- * @param inputShape model input shape. Normally in YOLO model [batch, channels, width, height]
+ * License Plate Detection and Recognition Pipeline
+ * 
+ * Simplified orchestration function that combines:
+ * 1. YOLO detection (via detectObjects)
+ * 2. OCR recognition (via extractLicensePlates)
+ * 
+ * Note: This function does NOT render boxes - rendering is handled separately
+ * by usePlateScanner to avoid duplicate rendering.
+ * 
+ * @param image - Image or video element to detect plates in
+ * @param canvas - Canvas for OCR processing (not for rendering)
+ * @param session - ONNX Runtime session with loaded YOLO model
+ * @param iouThreshold - NMS IoU threshold (e.g., 0.3)
+ * @param scoreThreshold - Minimum confidence threshold (e.g., 0.25)
+ * @param inputShape - Model input shape [batch, channels, height, width]
  * @returns Array of detected boxes with OCR results
  */
 export const detectImageSimple = async (
@@ -251,33 +29,25 @@ export const detectImageSimple = async (
   scoreThreshold: number,
   inputShape: readonly number[]
 ): Promise<DetectionBox[]> => {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return [];
-  
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Step 1: Detect license plate bounding boxes
+  const boxes = await detectObjects(
+    image,
+    session,
+    scoreThreshold,
+    iouThreshold,
+    inputShape
+  );
 
-  const [modelWidth, modelHeight] = inputShape.slice(2);
-  const [input, xRatio, yRatio] = preprocessing(image, modelWidth, modelHeight);
+  if (boxes.length === 0) {
+    return [];
+  }
 
-  const tensor = new Tensor("float32", input.data32F, inputShape);
-  const output = await session.net.run({ images: tensor });
+  // Step 2: Create a temporary canvas with the full frame for OCR cropping
+  const tempCanvas = createCanvas(canvas.width, canvas.height);
+  drawToCanvas(image, tempCanvas);
 
-  const output0 = output[Object.keys(output)[0]];
-  const boxes = processDetections(output0, scoreThreshold, xRatio, yRatio);
-  const selectedBoxes = nonMaxSuppression(boxes, iouThreshold);
+  // Step 3: Extract and recognize license plates
+  const boxesWithOCR = await extractLicensePlates(boxes, tempCanvas);
 
-  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  renderBoxes(ctx, selectedBoxes);
-
-  // Extract and recognize license plates
-  const boxesWithOCR = await extractLicensePlateCrops(selectedBoxes, canvas);
-
-  // Re-render with OCR results
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  renderBoxes(ctx, boxesWithOCR);
-  
   return boxesWithOCR;
-
-  input.delete();
 };

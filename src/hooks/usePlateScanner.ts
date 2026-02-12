@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { detectImageSimple } from '../utils/detectSimple';
 import { renderBoxes } from '../utils/renderBox';
+import { createCanvas, drawToCanvas } from '../utils/canvas/canvasUtils';
 import type { Session, ScannerConfig, ScanResult, DetectionBox } from '../types';
 
 export const usePlateScanner = (
@@ -46,16 +47,14 @@ export const usePlateScanner = (
     async (videoElement: HTMLVideoElement) => {
       if (!session || !videoElement.videoWidth) return;
 
-      // Create temporary canvas for detection
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = videoElement.videoWidth;
-      tempCanvas.height = videoElement.videoHeight;
-      const ctx = tempCanvas.getContext('2d');
-      if (!ctx) return;
+      // Create temporary canvas for detection and OCR
+      const tempCanvas = createCanvas(
+        videoElement.videoWidth,
+        videoElement.videoHeight
+      );
+      drawToCanvas(videoElement, tempCanvas);
 
-      ctx.drawImage(videoElement, 0, 0);
-
-      // Run detection + OCR
+      // Run detection + OCR (detectImageSimple no longer renders)
       const boxes = await detectImageSimple(
         videoElement,
         tempCanvas,
