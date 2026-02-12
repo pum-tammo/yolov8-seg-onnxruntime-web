@@ -20,7 +20,7 @@ export default defineConfig({
       ]
     })
   ],
-  base: '/yolov8-seg-onnxruntime-web/',
+  base: '/',
   server: {
     headers: {
       'Cross-Origin-Embedder-Policy': 'credentialless',
