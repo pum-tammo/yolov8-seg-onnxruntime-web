@@ -112,26 +112,31 @@ const App: React.FC = () => {
       )}
 
       <div className="content">
-        <video
-          ref={videoRef}
-          style={{
-            display: cameraActive ? "block" : "none",
-            width: "100%",
-            maxWidth: "640px",
-            borderRadius: "8px",
-          }}
-          playsInline
-          muted
-        />
-        <canvas
-          ref={scanCanvasRef}
-          style={{
-            display: isScanning ? "block" : "none",
-            width: "100%",
-            maxWidth: "640px",
-            borderRadius: "8px",
-          }}
-        />
+        <div style={{ position: 'relative', maxWidth: '640px', margin: '0 auto' }}>
+          <video
+            ref={videoRef}
+            style={{
+              display: cameraActive ? 'block' : 'none',
+              width: '100%',
+              borderRadius: '8px',
+            }}
+            playsInline
+            muted
+          />
+          <canvas
+            ref={scanCanvasRef}
+            style={{
+              display: cameraActive ? 'block' : 'none',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              borderRadius: '8px',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
       </div>
 
       {foundPlate && (

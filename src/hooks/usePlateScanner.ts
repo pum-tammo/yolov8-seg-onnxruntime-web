@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { InferenceSession } from 'onnxruntime-web';
 import { detectImageSimple } from '../utils/detectSimple';
+import { renderBoxes } from '../utils/renderBox';
 
 interface ScannerConfig {
   intervalMs: number;
@@ -57,13 +58,19 @@ export const usePlateScanner = (
         config.inputShape
       );
 
-      // Always update display canvas with current frame (with or without detection)
-      if (canvasRef.current) {
-        canvasRef.current.width = tempCanvas.width;
-        canvasRef.current.height = tempCanvas.height;
+      // Update overlay canvas with boxes only (transparent background)
+      if (canvasRef.current && videoElement.videoWidth > 0) {
+        canvasRef.current.width = videoElement.videoWidth;
+        canvasRef.current.height = videoElement.videoHeight;
         const displayCtx = canvasRef.current.getContext('2d');
         if (displayCtx) {
-          displayCtx.drawImage(tempCanvas, 0, 0);
+          // Clear canvas (transparent)
+          displayCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          
+          // Draw boxes only (no video frame)
+          if (boxes && boxes.length > 0) {
+            renderBoxes(displayCtx, boxes);
+          }
         }
       }
 
