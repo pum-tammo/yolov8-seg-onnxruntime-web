@@ -3,7 +3,6 @@
   "homepage": "https://hyuto.github.io/yolov8-seg-onnxruntime-web/",
   "version": "0.1.0",
   "dependencies": {
-    "@techstark/opencv-js": "4.5.5-release.2",
     "onnxruntime-web": "^1.20.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

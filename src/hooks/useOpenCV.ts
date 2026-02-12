@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 
-const OPENCV_URL = 'https://docs.opencv.org/4.5.5/opencv.js';
+// Use Vite's base URL to construct the correct path
+const OPENCV_URL = `${import.meta.env.BASE_URL}opencv.js`;
 
 export const useOpenCV = () => {
   const [isReady, setIsReady] = useState(false);
@@ -34,9 +35,10 @@ export const useOpenCV = () => {
     script.type = 'text/javascript';
 
     script.onload = () => {
-      // Wait for OpenCV to initialize
+      // Wait for OpenCV to initialize (it self-executes and sets window.cv)
       const checkOpenCV = () => {
-        if ((window as any).cv) {
+        const cv = (window as any).cv;
+        if (cv && typeof cv.imread === 'function') {
           setIsReady(true);
         } else {
           setTimeout(checkOpenCV, 100);
@@ -46,15 +48,10 @@ export const useOpenCV = () => {
     };
 
     script.onerror = () => {
-      console.error('Failed to load OpenCV.js from CDN');
+      console.error('Failed to load OpenCV.js. Make sure the file exists in public/.');
     };
 
     document.head.appendChild(script);
-
-    // Cleanup function
-    return () => {
-      // Note: We don't remove the script on unmount as other components might need it
-    };
   }, []);
 
   return isReady;
