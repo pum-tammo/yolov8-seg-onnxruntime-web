@@ -79,9 +79,14 @@ const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement): Promise
 };
 
 const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement): Promise<Box[]> => {
-  return await Promise.all(
-    boxes.map((box) => processLicensePlate(box, canvas))
-  );
+  // Process sequentially to avoid "Session already started" error
+  // ONNX Runtime sessions cannot handle concurrent run() calls
+  const results: Box[] = [];
+  for (const box of boxes) {
+    const result = await processLicensePlate(box, canvas);
+    results.push(result);
+  }
+  return results;
 };
 
 // ============================================================
