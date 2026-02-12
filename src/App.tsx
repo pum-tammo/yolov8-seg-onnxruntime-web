@@ -52,6 +52,7 @@ const App: React.FC = () => {
     canvasRef: scanCanvasRef,
     startScanning,
     stopScanning,
+    reset: resetScanner,
   } = usePlateScanner(
     session,
     {
@@ -75,6 +76,8 @@ const App: React.FC = () => {
 
   const handleCameraStart = useCallback(async () => {
     setFoundPlate(null);
+    setScanConfidence(undefined);
+    resetScanner();
     await startCamera();
     if (videoRef.current && session) {
       setTimeout(() => {
@@ -83,13 +86,14 @@ const App: React.FC = () => {
         }
       }, 500);
     }
-  }, [startCamera, startScanning, session, videoRef]);
+  }, [startCamera, startScanning, session, videoRef, resetScanner]);
 
   const handleCameraStop = useCallback(() => {
     stopScanning();
     stopCamera();
+    resetScanner();
     setFoundPlate(null);
-  }, [stopScanning, stopCamera]);
+  }, [stopScanning, stopCamera, resetScanner]);
 
   return (
     <div className="App">

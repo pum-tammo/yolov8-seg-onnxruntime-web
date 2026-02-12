@@ -57,6 +57,16 @@ export const usePlateScanner = (
         config.inputShape
       );
 
+      // Always update display canvas with current frame (with or without detection)
+      if (canvasRef.current) {
+        canvasRef.current.width = tempCanvas.width;
+        canvasRef.current.height = tempCanvas.height;
+        const displayCtx = canvasRef.current.getContext('2d');
+        if (displayCtx) {
+          displayCtx.drawImage(tempCanvas, 0, 0);
+        }
+      }
+
       // Extract first detected plate with text
       if (boxes && boxes.length > 0) {
         const detectedBox = boxes.find((box) => box.text && box.text.length > 0);
@@ -69,16 +79,6 @@ export const usePlateScanner = (
           
           setLastResult(result);
           onPlateDetected?.(result);
-          
-          // Draw result on display canvas if available
-          if (canvasRef.current) {
-            canvasRef.current.width = tempCanvas.width;
-            canvasRef.current.height = tempCanvas.height;
-            const displayCtx = canvasRef.current.getContext('2d');
-            if (displayCtx) {
-              displayCtx.drawImage(tempCanvas, 0, 0);
-            }
-          }
         }
       }
     },
@@ -105,6 +105,18 @@ export const usePlateScanner = (
     setIsScanning(false);
   }, []);
 
+  const reset = useCallback(() => {
+    // Clear canvas
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+    }
+    // Reset last result
+    setLastResult(null);
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -120,5 +132,6 @@ export const usePlateScanner = (
     canvasRef,
     startScanning,
     stopScanning,
+    reset,
   };
 };
