@@ -20,13 +20,16 @@ Combines YOLOv11 detection with fast-plate-ocr for real-time license plate recog
 ## 🤖 About the Models
 
 ### YOLOv11 License Plate Detection
+
 The detection model is YOLOv11n (nano variant) from [morsetechlab/yolov11-license-plate-detection](https://huggingface.co/morsetechlab/yolov11-license-plate-detection). It's optimized for:
+
 - Fast inference on edge devices
 - Accurate license plate localization
 - Multiple plate detection in single frame
 - Converted to ONNX format for browser compatibility
 
 ### Fast Plate OCR
+
 The OCR model uses MobileViT-v2 architecture trained on global license plates. Supports 65+ countries with high accuracy on alphanumeric characters.
 
 ## Tech Stack

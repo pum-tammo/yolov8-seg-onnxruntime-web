@@ -1,18 +1,11 @@
-interface Box {
-  label: string;
-  probability: number;
-  color: string;
-  bounding: [number, number, number, number];
-  text?: string;  // OCR-erkannter Text
-  confidence?: number;  // OCR Confidence
-}
+import type { DetectionBox } from '../types';
 
 /**
  * Render prediction boxes
  * @param {CanvasRenderingContext2D} ctx canvas context
- * @param {Box[]} boxes boxes array
+ * @param {DetectionBox[]} boxes boxes array
  */
-export const renderBoxes = (ctx: CanvasRenderingContext2D, boxes: Box[]): void => {
+export const renderBoxes = (ctx: CanvasRenderingContext2D, boxes: readonly DetectionBox[]): void => {
   // font configs
   const font = `${Math.max(
     Math.round(Math.max(ctx.canvas.width, ctx.canvas.height) / 40),

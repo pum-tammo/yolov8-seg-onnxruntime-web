@@ -1,24 +1,8 @@
-import { Tensor, InferenceSession } from "onnxruntime-web";
+import { Tensor } from "onnxruntime-web";
 import { renderBoxes, Colors } from "./renderBox";
 import labels from "./labels.json";
-import { globalOCREngine, type OCRResult } from "./ocr/ocrEngine";
-
-// ============================================================
-// TYPES
-// ============================================================
-
-export interface Box {
-  label: string;
-  probability: number;
-  color: string;
-  bounding: [number, number, number, number];
-  text?: string;
-  confidence?: number;
-}
-
-interface Session {
-  net: InferenceSession;
-}
+import { globalOCREngine } from "./ocr/ocrEngine";
+import type { DetectionBox, BoundingBox, Session, OCRResult } from "../types";
 
 
 // ============================================================
@@ -51,7 +35,7 @@ const performOCR = async (canvas: HTMLCanvasElement): Promise<OCRResult> => {
 // LICENSE PLATE EXTRACTION
 // ============================================================
 
-const cropBox = (canvas: HTMLCanvasElement, box: Box): HTMLCanvasElement => {
+const cropBox = (canvas: HTMLCanvasElement, box: DetectionBox): HTMLCanvasElement => {
   const [x, y, width, height] = box.bounding;
   const cropCanvas = document.createElement('canvas');
   cropCanvas.width = width;
@@ -64,7 +48,7 @@ const cropBox = (canvas: HTMLCanvasElement, box: Box): HTMLCanvasElement => {
   return cropCanvas;
 };
 
-const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement): Promise<Box> => {
+const processLicensePlate = async (box: DetectionBox, canvas: HTMLCanvasElement): Promise<DetectionBox> => {
   const cropCanvas = cropBox(canvas, box);
   
   // Log cropped license plate image
@@ -72,16 +56,17 @@ const processLicensePlate = async (box: Box, canvas: HTMLCanvasElement): Promise
   
   const ocrResult = await performOCR(cropCanvas);
   
-  box.text = ocrResult.text;
-  box.confidence = ocrResult.confidence;
-  
-  return box;
+  return {
+    ...box,
+    text: ocrResult.text,
+    confidence: ocrResult.confidence,
+  };
 };
 
-const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement): Promise<Box[]> => {
+const extractLicensePlateCrops = async (boxes: readonly DetectionBox[], canvas: HTMLCanvasElement): Promise<DetectionBox[]> => {
   // Process sequentially to avoid "Session already started" error
   // ONNX Runtime sessions cannot handle concurrent run() calls
-  const results: Box[] = [];
+  const results: DetectionBox[] = [];
   for (const box of boxes) {
     const result = await processLicensePlate(box, canvas);
     results.push(result);
@@ -93,7 +78,7 @@ const extractLicensePlateCrops = async (boxes: Box[], canvas: HTMLCanvasElement)
 // BOX DETECTION & NMS
 // ============================================================
 
-const calculateIoU = (box1: [number, number, number, number], box2: [number, number, number, number]): number => {
+const calculateIoU = (box1: BoundingBox, box2: BoundingBox): number => {
   const [x1, y1, w1, h1] = box1;
   const [x2, y2, w2, h2] = box2;
 
@@ -108,11 +93,11 @@ const calculateIoU = (box1: [number, number, number, number], box2: [number, num
   return intersectionArea / unionArea;
 };
 
-const nonMaxSuppression = (boxes: Box[], iouThreshold: number): Box[] => {
+const nonMaxSuppression = (boxes: readonly DetectionBox[], iouThreshold: number): DetectionBox[] => {
   if (boxes.length === 0) return [];
 
   const sortedBoxes = [...boxes].sort((a, b) => b.probability - a.probability);
-  const selected: Box[] = [];
+  const selected: DetectionBox[] = [];
   const suppressed = new Set<number>();
 
   sortedBoxes.forEach((box, i) => {
@@ -142,7 +127,7 @@ const createBox = (
   confidence: number,
   xRatio: number,
   yRatio: number
-): Box => {
+): DetectionBox => {
   const x1 = Math.max(0, Math.floor((x - w / 2) * xRatio));
   const y1 = Math.max(0, Math.floor((y - h / 2) * yRatio));
   const width = Math.floor(w * xRatio);
@@ -152,18 +137,18 @@ const createBox = (
     label: labels[0] || "license-plate",
     probability: confidence,
     color: colors.get(0),
-    bounding: [x1, y1, width, height],
+    bounding: [x1, y1, width, height] as BoundingBox,
   };
 };
 
 const processDetections = (
-  output: any,
+  output: Tensor,
   scoreThreshold: number,
   xRatio: number,
   yRatio: number
-): Box[] => {
+): DetectionBox[] => {
   const [, , numDetections] = output.dims;
-  const boxes: Box[] = [];
+  const boxes: DetectionBox[] = [];
 
   for (let i = 0; i < numDetections; i++) {
     const x = output.data[i] as number;
@@ -264,8 +249,8 @@ export const detectImageSimple = async (
   session: Session,
   iouThreshold: number,
   scoreThreshold: number,
-  inputShape: number[]
-): Promise<Box[]> => {
+  inputShape: readonly number[]
+): Promise<DetectionBox[]> => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return [];
   

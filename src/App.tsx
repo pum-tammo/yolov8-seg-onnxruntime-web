@@ -3,13 +3,10 @@ import Loader from "./components/loader";
 import { PlateInfoCard } from "./components/PlateInfoCard";
 import { useCamera } from "./hooks/useCamera";
 import { useOpenCV } from "./hooks/useOpenCV";
-import {
-  useModelSession,
-  MODEL_CONFIG,
-  LoadingState,
-} from "./hooks/useModelSession";
-import { usePlateScanner, ScanResult } from "./hooks/usePlateScanner";
-import { plateDatabase, PlateInfo } from "./utils/plateDatabase";
+import { useModelSession, MODEL_CONFIG } from "./hooks/useModelSession";
+import { usePlateScanner } from "./hooks/usePlateScanner";
+import { plateDatabase } from "./utils/plateDatabase";
+import type { LoadingState, ScanResult, PlateInfo } from "./types";
 import "./style/App.css";
 
 // Components
@@ -48,7 +45,6 @@ const App: React.FC = () => {
 
   // Scanner with 500ms interval
   const {
-    isScanning,
     canvasRef: scanCanvasRef,
     startScanning,
     stopScanning,

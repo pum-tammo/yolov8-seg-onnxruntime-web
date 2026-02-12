@@ -3,23 +3,15 @@ import { Tensor, InferenceSession } from 'onnxruntime-web';
 import * as ort from 'onnxruntime-web';
 import { download } from '../utils/download';
 import { globalOCREngine } from '../utils/ocr/ocrEngine';
+import type { Session, LoadingState, ModelConfig } from '../types';
 
 // Configure ONNX Runtime WebAssembly paths
 ort.env.wasm.wasmPaths = `${import.meta.env.BASE_URL}`;
 ort.env.wasm.numThreads = 1;
 
-interface LoadingState {
-  text: string;
-  progress: number | null;
-}
-
-interface Session {
-  net: InferenceSession;
-}
-
-const MODEL_CONFIG = {
+const MODEL_CONFIG: ModelConfig = {
   name: 'license-plate.onnx',
-  inputShape: [1, 3, 640, 640],
+  inputShape: [1, 3, 640, 640] as const,
   iouThreshold: 0.3,
   scoreThreshold: 0.25,
 };
@@ -73,4 +65,3 @@ export const useModelSession = (
 };
 
 export { MODEL_CONFIG };
-export type { Session, LoadingState };

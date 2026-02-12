@@ -1,10 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-
-interface CameraState {
-  isActive: boolean;
-  error: string | null;
-  stream: MediaStream | null;
-}
+import type { CameraState } from '../types';
 
 export const useCamera = () => {
   const [state, setState] = useState<CameraState>({

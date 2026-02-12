@@ -1,24 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { InferenceSession } from 'onnxruntime-web';
 import { detectImageSimple } from '../utils/detectSimple';
 import { renderBoxes } from '../utils/renderBox';
-
-interface ScannerConfig {
-  intervalMs: number;
-  iouThreshold: number;
-  scoreThreshold: number;
-  inputShape: number[];
-}
-
-interface Session {
-  net: InferenceSession;
-}
-
-export interface ScanResult {
-  plate: string;
-  confidence: number;
-  timestamp: number;
-}
+import type { Session, ScannerConfig, ScanResult, DetectionBox } from '../types';
 
 export const usePlateScanner = (
   session: Session | null,
@@ -30,22 +13,46 @@ export const usePlateScanner = (
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Update canvas overlay with detection boxes
+  const updateCanvasOverlay = useCallback((boxes: readonly DetectionBox[], videoWidth: number, videoHeight: number) => {
+    if (!canvasRef.current) return;
+    
+    canvasRef.current.width = videoWidth;
+    canvasRef.current.height = videoHeight;
+    const ctx = canvasRef.current.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, videoWidth, videoHeight);
+    if (boxes?.length > 0) {
+      renderBoxes(ctx, boxes);
+    }
+  }, []);
+
+  // Process detected boxes and trigger callback
+  const processDetection = useCallback((boxes: readonly DetectionBox[]) => {
+    const detectedBox = boxes.find((box) => box.text && box.text.length > 0);
+    if (detectedBox?.text) {
+      const result: ScanResult = {
+        plate: detectedBox.text,
+        confidence: detectedBox.confidence || 0,
+        timestamp: Date.now(),
+      };
+      setLastResult(result);
+      onPlateDetected?.(result);
+    }
+  }, [onPlateDetected]);
+
   const captureFrame = useCallback(
     async (videoElement: HTMLVideoElement) => {
       if (!session || !videoElement.videoWidth) return;
-
-      const now = new Date();
-      console.log('📸 Frame captured at', now.toLocaleTimeString() + '.' + now.getMilliseconds().toString().padStart(3, '0'));
 
       // Create temporary canvas for detection
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = videoElement.videoWidth;
       tempCanvas.height = videoElement.videoHeight;
-
       const ctx = tempCanvas.getContext('2d');
       if (!ctx) return;
 
-      // Draw current video frame
       ctx.drawImage(videoElement, 0, 0);
 
       // Run detection + OCR
@@ -58,38 +65,13 @@ export const usePlateScanner = (
         config.inputShape
       );
 
-      // Update overlay canvas with boxes only (transparent background)
-      if (canvasRef.current && videoElement.videoWidth > 0) {
-        canvasRef.current.width = videoElement.videoWidth;
-        canvasRef.current.height = videoElement.videoHeight;
-        const displayCtx = canvasRef.current.getContext('2d');
-        if (displayCtx) {
-          // Clear canvas (transparent)
-          displayCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          
-          // Draw boxes only (no video frame)
-          if (boxes && boxes.length > 0) {
-            renderBoxes(displayCtx, boxes);
-          }
-        }
-      }
-
-      // Extract first detected plate with text
-      if (boxes && boxes.length > 0) {
-        const detectedBox = boxes.find((box) => box.text && box.text.length > 0);
-        if (detectedBox && detectedBox.text) {
-          const result: ScanResult = {
-            plate: detectedBox.text,
-            confidence: detectedBox.confidence || 0,
-            timestamp: Date.now(),
-          };
-          
-          setLastResult(result);
-          onPlateDetected?.(result);
-        }
+      // Update overlay and process results
+      updateCanvasOverlay(boxes, videoElement.videoWidth, videoElement.videoHeight);
+      if (boxes?.length > 0) {
+        processDetection(boxes);
       }
     },
-    [session, config, onPlateDetected]
+    [session, config, updateCanvasOverlay, processDetection]
   );
 
   const startScanning = useCallback(
@@ -113,14 +95,10 @@ export const usePlateScanner = (
   }, []);
 
   const reset = useCallback(() => {
-    // Clear canvas
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      }
+      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
-    // Reset last result
     setLastResult(null);
   }, []);
 

@@ -1,10 +1,6 @@
 import { InferenceSession, Tensor } from 'onnxruntime-web';
 import { PlateOCRConfig, GLOBAL_PLATE_OCR_CONFIG } from './plateOCRConfig';
-
-export interface OCRResult {
-  text: string;
-  confidence: number;
-}
+import type { OCRResult } from '../../types';
 
 export class PlateOCREngine {
   private session: InferenceSession | null = null;

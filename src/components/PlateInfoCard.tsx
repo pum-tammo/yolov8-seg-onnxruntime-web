@@ -1,13 +1,6 @@
 import React from 'react';
+import type { PlateInfo } from '../types';
 import './PlateInfoCard.css';
-
-interface PlateInfo {
-  plate: string;
-  owner: string;
-  vehicle: string;
-  color: string;
-  notes: string;
-}
 
 interface PlateInfoCardProps {
   plateInfo: PlateInfo | null;

@@ -1,12 +1,5 @@
 import licensePlatesData from '../data/licensePlates.json';
-
-export interface PlateInfo {
-  plate: string;
-  owner: string;
-  vehicle: string;
-  color: string;
-  notes: string;
-}
+import type { PlateInfo } from '../types';
 
 class PlateDatabase {
   private plates: Map<string, PlateInfo>;
