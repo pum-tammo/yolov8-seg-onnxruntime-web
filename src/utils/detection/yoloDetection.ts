@@ -3,7 +3,6 @@ import type { DetectionBox, BoundingBox, Session } from '../../types';
 import { preprocessImage, type PreprocessingResult } from './preprocessing';
 import { nonMaxSuppression } from './nms';
 import { Colors } from '../renderBox';
-import labels from '../labels.json';
 
 const colors = new Colors();
 
@@ -35,7 +34,7 @@ const createBox = (
   const height = Math.floor(h * yRatio);
 
   return {
-    label: labels[0] || 'license-plate',
+    label: 'license-plate',
     probability: confidence,
     color: colors.get(0),
     bounding: [x1, y1, width, height] as BoundingBox,

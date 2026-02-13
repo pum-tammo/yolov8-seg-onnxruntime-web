@@ -1,12 +1,10 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import Loader from "./components/loader";
-import { PlateInfoCard } from "./components/PlateInfoCard";
 import { useCamera } from "./hooks/useCamera";
 import { useOpenCV } from "./hooks/useOpenCV";
 import { useModelSession, MODEL_CONFIG } from "./hooks/useModelSession";
 import { usePlateScanner } from "./hooks/usePlateScanner";
-import { plateDatabase } from "./utils/plateDatabase";
-import type { LoadingState, ScanResult, PlateInfo } from "./types";
+import type { LoadingState, ScanResult } from "./types";
 import "./style/App.css";
 
 // Components
@@ -26,15 +24,13 @@ const App: React.FC = () => {
     text: "Loading OpenCV.js",
     progress: null,
   });
-  const [foundPlate, setFoundPlate] = useState<PlateInfo | null>(null);
-  const [scanConfidence, setScanConfidence] = useState<number | undefined>(
-    undefined,
-  );
+
+  const [scanLog, setScanLog] = useState<ScanResult[]>([]);
+  const [matchResult, setMatchResult] = useState<string | null>(null);
 
   const openCVReady = useOpenCV();
   const session = useModelSession(openCVReady, setLoading);
 
-  // Camera
   const {
     videoRef,
     isActive: cameraActive,
@@ -43,9 +39,8 @@ const App: React.FC = () => {
     stopCamera,
   } = useCamera();
 
-  // Scanner with 500ms interval
   const {
-    canvasRef: scanCanvasRef,
+    canvasRef,
     startScanning,
     stopScanning,
     reset: resetScanner,
@@ -58,22 +53,27 @@ const App: React.FC = () => {
       inputShape: MODEL_CONFIG.inputShape,
     },
     (result: ScanResult) => {
-      // Check if plate exists in database
-      const plateInfo = plateDatabase.findPlate(result.plate);
-      if (plateInfo) {
-        setFoundPlate(plateInfo);
-        setScanConfidence(result.confidence);
-        // Stop camera to save battery
-        stopScanning();
-        stopCamera();
-      }
+      setScanLog((prev) => [...prev, result]);
     },
   );
 
+  useEffect(() => {
+    if (scanLog.length >= 3) {
+      const last3 = scanLog.slice(-3);
+      const allHighConf = last3.every((r) => r.confidence >= 90);
+      const allSamePlate = last3.every((r) => r.plate === last3[0].plate);
+      if (allHighConf && allSamePlate) {
+        setMatchResult(last3[0].plate);
+        stopScanning();
+        stopCamera();
+      }
+    }
+  }, [scanLog]);
+
   const handleCameraStart = useCallback(async () => {
-    setFoundPlate(null);
-    setScanConfidence(undefined);
     resetScanner();
+    setScanLog([]);
+    setMatchResult(null);
     await startCamera();
     if (videoRef.current && session) {
       setTimeout(() => {
@@ -85,11 +85,10 @@ const App: React.FC = () => {
   }, [startCamera, startScanning, session, videoRef, resetScanner]);
 
   const handleCameraStop = useCallback(() => {
+    resetScanner();
     stopScanning();
     stopCamera();
-    resetScanner();
-    setFoundPlate(null);
-  }, [stopScanning, stopCamera, resetScanner]);
+  }, [resetScanner, stopScanning, stopCamera]);
 
   return (
     <div className="App">
@@ -122,7 +121,7 @@ const App: React.FC = () => {
             muted
           />
           <canvas
-            ref={scanCanvasRef}
+            ref={canvasRef}
             style={{
               display: cameraActive ? "block" : "none",
               position: "absolute",
@@ -137,19 +136,43 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {foundPlate && (
-        <PlateInfoCard plateInfo={foundPlate} confidence={scanConfidence} />
-      )}
-
       <div className="btn-container">
-        {!cameraActive && !foundPlate && (
+        {!cameraActive && (
           <button onClick={handleCameraStart}>Kamera starten</button>
         )}
         {cameraActive && (
           <button onClick={handleCameraStop}>Kamera stoppen</button>
         )}
-        {foundPlate && <button onClick={handleCameraStart}>Neu scannen</button>}
       </div>
+
+      {/* Match Result */}
+      {matchResult && (
+        <div
+          style={{
+            marginTop: 24,
+            fontWeight: "bold",
+            fontSize: 20,
+            color: "green",
+          }}
+        >
+          Erkanntes Kennzeichen: {matchResult}
+        </div>
+      )}
+
+      {/* Scan Log */}
+      {scanLog.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <h3>Scan Log</h3>
+          <ul>
+            {scanLog.map((entry, idx) => (
+              <li key={idx}>
+                {entry.plate} ({entry.confidence.toFixed(1)}%) –{" "}
+                {new Date(entry.timestamp).toLocaleTimeString()}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 };
