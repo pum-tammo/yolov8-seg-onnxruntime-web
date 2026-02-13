@@ -18,8 +18,8 @@ export const getOpenCV = (): OpenCVType => {
 };
 
 /**
- * Checks if OpenCV is ready
+ * Checks if OpenCV is loaded and available on window
  */
-export const isOpenCVReady = (): boolean => {
-  return typeof (window as any).cv !== 'undefined';
+export const isOpenCVLoaded = (): boolean => {
+  return typeof (window as any).cv !== 'undefined' && (window as any).cv !== null;
 };

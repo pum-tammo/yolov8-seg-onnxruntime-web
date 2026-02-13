@@ -1,50 +1,44 @@
-import { useState, useEffect } from 'react';
 
-// Use Vite's base URL to construct the correct path
+import { useState, useEffect } from 'react';
+import { isOpenCVLoaded } from '../utils/opencvService';
+
 const OPENCV_URL = `${import.meta.env.BASE_URL}opencv.js`;
 
 export const useOpenCV = () => {
   const [isReady, setIsReady] = useState(false);
 
+  // Hilfsfunktion für Polling
+  const checkOpenCVReady = () => {
+    if (isOpenCVLoaded()) {
+      setIsReady(true);
+    } else {
+      setTimeout(checkOpenCVReady, 100);
+    }
+  };
+
   useEffect(() => {
-    // Check if OpenCV is already loaded
-    if ((window as any).cv) {
+    // Prüfe, ob OpenCV bereits geladen ist
+    if (isOpenCVLoaded()) {
       setIsReady(true);
       return;
     }
 
-    // Check if script is already being loaded
+    // Prüfe, ob das Script bereits geladen wird
     const existingScript = document.querySelector(`script[src="${OPENCV_URL}"]`);
     if (existingScript) {
-      // Script exists, wait for it to load
-      const checkOpenCV = () => {
-        if ((window as any).cv) {
-          setIsReady(true);
-        } else {
-          setTimeout(checkOpenCV, 100);
-        }
-      };
-      checkOpenCV();
+      // Script existiert, warte auf OpenCV
+      checkOpenCVReady();
       return;
     }
 
-    // Create and load script dynamically
+    // Script dynamisch laden
     const script = document.createElement('script');
     script.src = OPENCV_URL;
     script.async = true;
     script.type = 'text/javascript';
 
     script.onload = () => {
-      // Wait for OpenCV to initialize (it self-executes and sets window.cv)
-      const checkOpenCV = () => {
-        const cv = (window as any).cv;
-        if (cv && typeof cv.imread === 'function') {
-          setIsReady(true);
-        } else {
-          setTimeout(checkOpenCV, 100);
-        }
-      };
-      checkOpenCV();
+      checkOpenCVReady();
     };
 
     script.onerror = () => {

@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Dispatch, SetStateAction } from 'react';
 import { Tensor, InferenceSession } from 'onnxruntime-web';
 import * as ort from 'onnxruntime-web';
-import { download } from '../utils/download';
 import { globalOCREngine } from '../utils/ocr/ocrEngine';
 import type { Session, LoadingState, ModelConfig } from '../types';
 
@@ -23,7 +22,7 @@ const executionProviders: InferenceSession.ExecutionProviderConfig[] = [
 
 export const useModelSession = (
   openCVReady: boolean,
-  setLoading: (state: LoadingState | null) => void
+  setLoading: Dispatch<SetStateAction<LoadingState | null>>
 ) => {
   const [session, setSession] = useState<Session | null>(null);
 
@@ -34,10 +33,10 @@ export const useModelSession = (
       const baseModelURL = `${import.meta.env.BASE_URL}model`;
 
       // Load License Plate Detection model
-      const arrBufNet = await download(`${baseModelURL}/${MODEL_CONFIG.name}`, [
+      const arrBufNet = await download(`${baseModelURL}/${MODEL_CONFIG.name}`,
         'Loading License Plate Detection model',
-        setLoading,
-      ]);
+        setLoading
+      );
       const yolov8 = await InferenceSession.create(arrBufNet, {
         executionProviders,
       });
@@ -62,6 +61,37 @@ export const useModelSession = (
   }, [openCVReady, setLoading]);
 
   return session;
+};
+
+const download = (url: string, loadingText: string, logger:  Dispatch<SetStateAction<LoadingState | null>> | null = null): Promise<ArrayBuffer> => {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("GET", url, true);
+    request.responseType = "arraybuffer";
+    if (logger) {
+      request.onprogress = (e) => {
+        const progress = (e.loaded / e.total) * 100;
+        logger(() => ({text: loadingText, progress: parseFloat(progress.toFixed(2))}));
+      };
+    }
+    request.onload = function () {
+      if (this.status >= 200 && this.status < 300) {
+        resolve(request.response);
+      } else {
+        reject({
+          status: this.status,
+          statusText: request.statusText,
+        });
+      }
+    };
+    request.onerror = function () {
+      reject({
+        status: this.status,
+        statusText: request.statusText,
+      });
+    };
+    request.send();
+  });
 };
 
 export { MODEL_CONFIG };
