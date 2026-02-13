@@ -17,21 +17,17 @@ export const useOpenCV = () => {
   };
 
   useEffect(() => {
-    // Prüfe, ob OpenCV bereits geladen ist
     if (isOpenCVLoaded()) {
       setIsReady(true);
       return;
     }
 
-    // Prüfe, ob das Script bereits geladen wird
     const existingScript = document.querySelector(`script[src="${OPENCV_URL}"]`);
     if (existingScript) {
-      // Script existiert, warte auf OpenCV
       checkOpenCVReady();
       return;
     }
 
-    // Script dynamisch laden
     const script = document.createElement('script');
     script.src = OPENCV_URL;
     script.async = true;

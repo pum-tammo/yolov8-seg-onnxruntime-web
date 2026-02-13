@@ -3,7 +3,7 @@
  * Provides type-safe access to OpenCV.js functionality
  */
 
-type OpenCVType = any; // OpenCV.js doesn't provide TypeScript types
+import { OpenCVType } from "../types/OpenCVType";
 
 /**
  * Gets the global OpenCV instance
@@ -14,7 +14,7 @@ export const getOpenCV = (): OpenCVType => {
   if (!cv) {
     throw new Error('OpenCV is not loaded');
   }
-  return cv;
+  return cv as OpenCVType;
 };
 
 /**
